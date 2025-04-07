@@ -1,0 +1,199 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="recommendation-dashboard">
+    <!-- Welcome Section -->
+    <div class="welcome-section mb-4">
+        <h1 class="display-5">Welcome to Smart Market</h1>
+        <p class="lead">Discover personalized recommendations based on your shopping history.</p>
+    </div>
+
+    <!-- Search Results Section (if search query exists) -->
+    {% if query %}
+    <div class="search-results mb-5">
+        <h2>Search Results for "{{ query }}"</h2>
+        <div class="row">
+            {% for product in results %}
+            <div class="col-md-4 mb-3">
+                <div class="card h-100">
+                    <div class="card-body">
+                        <h5 class="card-title">{{ product.product_name }}</h5>
+                        <p class="card-text">
+                            <span class="badge bg-success">{{ product.aisle }}</span>
+                            <span class="badge bg-info">{{ product.department }}</span>
+                        </p>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Recommendations Section -->
+    <div class="row mb-5">
+        <!-- Market Basket Analysis Recommendations -->
+        <div class="col-md-6 mb-4">
+            <div class="card">
+                <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+                    <h3 class="h5 mb-0">Market Basket Analysis</h3>
+                    <button class="btn btn-sm btn-light" data-bs-toggle="collapse" data-bs-target="#mbaMetrics">
+                        <i class="fas fa-chart-bar"></i> Metrics
+                    </button>
+                </div>
+                <div class="collapse" id="mbaMetrics">
+                    <div class="card-body bg-light">
+                        <div class="row">
+                            <div class="col-6 col-md-3">
+                                <div class="metric-card text-center">
+                                    <h6>Accuracy</h6>
+                                    <p class="h4">{{ mba_metrics.accuracy|floatformat:3 }}</p>
+                                </div>
+                            </div>
+                            <div class="col-6 col-md-3">
+                                <div class="metric-card text-center">
+                                    <h6>Precision</h6>
+                                    <p class="h4">{{ mba_metrics.precision|floatformat:3 }}</p>
+                                </div>
+                            </div>
+                            <div class="col-6 col-md-3">
+                                <div class="metric-card text-center">
+                                    <h6>Recall</h6>
+                                    <p class="h4">{{ mba_metrics.recall|floatformat:3 }}</p>
+                                </div>
+                            </div>
+                            <div class="col-6 col-md-3">
+                                <div class="metric-card text-center">
+                                    <h6>F1 Score</h6>
+                                    <p class="h4">{{ mba_metrics.f1_score|floatformat:3 }}</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        {% for rec in mba_recommendations %}
+                        <div class="col-md-6 mb-3">
+                            <div class="recommendation-card">
+                                <h5>{{ rec.aisle_name }}</h5>
+                                <div class="metrics">
+                                    <span class="badge bg-info">Confidence: {{ rec.confidence|floatformat:2 }}</span>
+                                    <span class="badge bg-success">Lift: {{ rec.lift|floatformat:2 }}</span>
+                                </div>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- SVD Recommendations -->
+        <div class="col-md-6 mb-4">
+            <div class="card">
+                <div class="card-header bg-success text-white d-flex justify-content-between align-items-center">
+                    <h3 class="h5 mb-0">SVD Recommendations</h3>
+                    <button class="btn btn-sm btn-light" data-bs-toggle="collapse" data-bs-target="#svdMetrics">
+                        <i class="fas fa-chart-bar"></i> Metrics
+                    </button>
+                </div>
+                <div class="collapse" id="svdMetrics">
+                    <div class="card-body bg-light">
+                        <div class="row">
+                            <div class="col-6 col-md-3">
+                                <div class="metric-card text-center">
+                                    <h6>Accuracy</h6>
+                                    <p class="h4">{{ svd_metrics.accuracy|floatformat:3 }}</p>
+                                </div>
+                            </div>
+                            <div class="col-6 col-md-3">
+                                <div class="metric-card text-center">
+                                    <h6>Precision</h6>
+                                    <p class="h4">{{ svd_metrics.precision|floatformat:3 }}</p>
+                                </div>
+                            </div>
+                            <div class="col-6 col-md-3">
+                                <div class="metric-card text-center">
+                                    <h6>Recall</h6>
+                                    <p class="h4">{{ svd_metrics.recall|floatformat:3 }}</p>
+                                </div>
+                            </div>
+                            <div class="col-6 col-md-3">
+                                <div class="metric-card text-center">
+                                    <h6>F1 Score</h6>
+                                    <p class="h4">{{ svd_metrics.f1_score|floatformat:3 }}</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        {% for rec in svd_recommendations %}
+                        <div class="col-md-6 mb-3">
+                            <div class="recommendation-card">
+                                <h5>{{ rec.aisle_name }}</h5>
+                                <div class="metrics">
+                                    <span class="badge bg-primary">Similarity: {{ rec.similarity_score|floatformat:2 }}</span>
+                                </div>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.recommendation-dashboard {
+    max-width: 1200px;
+    margin: 0 auto;
+}
+
+.metric-card {
+    background: white;
+    padding: 1rem;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+}
+
+.recommendation-card {
+    background: white;
+    padding: 1rem;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    height: 100%;
+}
+
+.recommendation-card h5 {
+    margin-bottom: 0.5rem;
+    color: #2c3e50;
+}
+
+.metrics {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.welcome-section {
+    text-align: center;
+    padding: 2rem 0;
+    background: linear-gradient(to right, #f8f9fa, #e9ecef);
+    border-radius: 10px;
+    margin-bottom: 2rem;
+}
+
+.card-header {
+    border-bottom: none;
+}
+
+.badge {
+    font-weight: 500;
+    padding: 0.5em 0.75em;
+}
+</style>
+{% endblock %}
