@@ -157,38 +157,62 @@ class MarketBasketModel:
             print(f"Error loading model: {str(e)}")
             return None
 
-    def get_recommendations(self, aisle_ids, n_recommendations=5):
-        """Get aisle recommendations based on current aisles"""
+    def get_recommendations(self, user_id, user_aisles, n_recommendations=5):
+        """Get aisle recommendations based on user cluster and purchase history"""
         if self.rules is None:
             return []
             
-        # Filter rules where antecedents match current aisles
-        matching_rules = self.rules[
-            self.rules['antecedents'].apply(
-                lambda x: any(aid in x for aid in aisle_ids)
-            )
-        ]
-        
-        # Get unique consequent aisles that aren't in current aisles
-        recommendations = []
-        seen_aisles = set()
-        
-        for _, rule in matching_rules.iterrows():
-            for aisle_id in rule['consequents']:
-                if aisle_id not in aisle_ids and aisle_id not in seen_aisles:
-                    recommendations.append({
-                        'aisle_id': aisle_id,
-                        'aisle_name': self.aisle_names.get(aisle_id, f"Aisle {aisle_id}"),
-                        'confidence': float(rule['confidence']),
-                        'lift': float(rule['lift']),
-                        'support': float(rule['support'])
-                    })
-                    seen_aisles.add(aisle_id)
+        try:
+            # Load user clusters
+            user_clusters = pd.read_csv('instacart/static/csv/user_clusters.csv')
+            user_cluster = user_clusters[user_clusters['user_id'] == user_id]['Cluster'].iloc[0]
+            
+            # Adjust recommendations based on cluster
+            cluster_weights = {
+                0: {'confidence': 0.6, 'lift': 0.4},  # Super Frequent - balance between confidence and lift
+                1: {'confidence': 0.8, 'lift': 0.2},  # Inactive - focus on high confidence items
+                2: {'confidence': 0.3, 'lift': 0.7},  # VIP - focus on discovering new items (high lift)
+                3: {'confidence': 0.5, 'lift': 0.5},  # Growing - balanced approach
+                4: {'confidence': 0.7, 'lift': 0.3}   # New/Sporadic - focus on safer recommendations
+            }
+            
+            # Get cluster-specific weights
+            weights = cluster_weights.get(user_cluster, {'confidence': 0.5, 'lift': 0.5})
+            
+            # Use a dictionary to keep track of best scores for each aisle
+            aisle_recommendations = {}
+            
+            # Calculate recommendations with cluster-specific scoring
+            for _, rule in self.rules.iterrows():
+                antecedents = rule['antecedents']
+                if all(aid in user_aisles for aid in antecedents):
+                    # Apply cluster weights to calculate score
+                    score = (rule['confidence'] * weights['confidence'] + 
+                            rule['lift'] * weights['lift'])
                     
-                    if len(recommendations) >= n_recommendations:
-                        return recommendations
-                        
-        return recommendations
+                    for consequent in rule['consequents']:
+                        if consequent not in user_aisles:
+                            # Update recommendation only if score is better than existing one
+                            if consequent not in aisle_recommendations or score > aisle_recommendations[consequent]['score']:
+                                aisle_recommendations[consequent] = {
+                                    'aisle_id': consequent,
+                                    'aisle_name': self.aisle_names.get(consequent, f"Aisle {consequent}"),
+                                    'confidence': float(rule['confidence']),
+                                    'lift': float(rule['lift']),
+                                    'score': float(score),
+                                    'cluster': int(user_cluster),
+                                    'weights': weights  # Include weights for transparency
+                                }
+            
+            # Convert dictionary to list and sort by score
+            recommendations = list(aisle_recommendations.values())
+            recommendations.sort(key=lambda x: x['score'], reverse=True)
+            
+            return recommendations[:n_recommendations]
+            
+        except Exception as e:
+            print(f"Error getting recommendations: {str(e)}")
+            return []
 
     def calculate_metrics(self):
         """Calculate model performance metrics using test data"""
@@ -264,6 +288,59 @@ class MarketBasketModel:
         except Exception as e:
             print(f"Error calculating metrics: {str(e)}")
             return None
+
+    def get_aisle_products(self, user_id, aisle_id, n_products=3):
+        """Get personalized product recommendations for a specific aisle"""
+        try:
+            # Load product data
+            products_df = pd.read_csv('instacart/static/csv/products.csv')
+            merged_df = pd.read_csv('instacart/static/csv/merged_data.csv')
+            orders_df = pd.read_csv('instacart/static/csv/orders_cleaned.csv')
+            
+            # Get user's purchase history
+            user_history = merged_df.merge(
+                orders_df[orders_df['user_id'] == user_id][['order_id']],
+                on='order_id'
+            ).merge(
+                products_df[['product_id', 'product_name', 'aisle_id']],
+                on='product_id'
+            )
+            
+            # Get products from the specific aisle
+            aisle_products = products_df[products_df['aisle_id'] == aisle_id]
+            
+            # Calculate product purchase frequency in this aisle
+            product_freq = user_history[user_history['aisle_id'] == aisle_id]['product_id'].value_counts()
+            
+            # Get products user has bought in this aisle
+            user_aisle_products = set(user_history[user_history['aisle_id'] == aisle_id]['product_id'])
+            
+            # Score products based on purchase frequency and user history
+            product_scores = []
+            for _, product in aisle_products.iterrows():
+                score = 0
+                if product['product_id'] in user_aisle_products:
+                    # Higher score for previously purchased products
+                    score = product_freq.get(product['product_id'], 0) * 2
+                else:
+                    # Base score for new products
+                    score = 1
+                    
+                product_scores.append({
+                    'product_id': product['product_id'],
+                    'product_name': product['product_name'],
+                    'score': score,
+                    'previously_bought': product['product_id'] in user_aisle_products
+                })
+            
+            # Sort by score and previously bought status
+            product_scores.sort(key=lambda x: (x['score'], x['previously_bought']), reverse=True)
+            
+            return product_scores[:n_products]
+            
+        except Exception as e:
+            print(f"Error getting aisle products: {str(e)}")
+            return []
 
 class SVDRecommender:
     def __init__(self, n_components=50):
@@ -357,12 +434,27 @@ class SVDRecommender:
             return False
 
     def get_recommendations(self, user_id, n_recommendations=5):
-        """Get aisle recommendations for a user"""
+        """Get recommendations using SVD and cluster information"""
         if self.normalized_matrix is None or not hasattr(self, 'user_to_idx'):
             return []
 
         try:
-            # Get user index
+            # Load user clusters
+            user_clusters = pd.read_csv('instacart/static/csv/user_clusters.csv')
+            user_cluster = user_clusters[user_clusters['user_id'] == user_id]['Cluster'].iloc[0]
+            
+            # Cluster-specific parameters
+            cluster_params = {
+                0: {'diversity_weight': 0.3},  # Super Frequent - some diversity
+                1: {'diversity_weight': 0.1},  # Inactive - focus on popular items
+                2: {'diversity_weight': 0.5},  # VIP - high diversity
+                3: {'diversity_weight': 0.4},  # Growing - moderate diversity
+                4: {'diversity_weight': 0.2}   # New/Sporadic - less diversity
+            }
+            
+            params = cluster_params.get(user_cluster, {'diversity_weight': 0.3})
+            
+            # Get user vector if user exists in training data
             if user_id not in self.user_to_idx:
                 print(f"User {user_id} not in model data, using general popularity recommendations")
                 # Return most popular aisles based on overall interaction counts
@@ -378,21 +470,19 @@ class SVDRecommender:
                         'aisle_name': self.aisle_names.get(aisle_id, f"Aisle {aisle_id}"),
                         'similarity_score': score
                     })
-                return recommendations
+                return self._add_diversity(recommendations, params['diversity_weight'])
             
+            # Get personalized recommendations for known users
             user_idx = self.user_to_idx[user_id]
+            user_vector = self.normalized_matrix[user_idx]
             
-            # Use the full matrix instead of just training data
-            if hasattr(self, 'transformed_matrix'):
-                user_vector = self.normalized_matrix[user_idx]
-                similarity_scores = np.dot(self.normalized_matrix, user_vector)
-            else:
-                # If no transformed matrix available, fall back to popularity-based
-                return self.get_popular_recommendations(n_recommendations)
+            # Calculate similarity scores
+            similarity_scores = np.dot(self.normalized_matrix, user_vector)
             
             # Get top similar aisles
-            top_indices = np.argsort(similarity_scores)[-n_recommendations:][::-1]
+            top_indices = np.argsort(similarity_scores)[-n_recommendations*2:][::-1]
             
+            # Create recommendations
             recommendations = []
             for idx in top_indices:
                 aisle_idx = idx % len(self.aisle_ids)  # Map back to aisle index
@@ -404,40 +494,47 @@ class SVDRecommender:
                     'similarity_score': score
                 })
             
-            return recommendations
+            # Add diversity based on cluster
+            diverse_recs = self._add_diversity(recommendations, params['diversity_weight'])
+            
+            return diverse_recs[:n_recommendations]
             
         except Exception as e:
             print(f"Error getting recommendations: {str(e)}")
             return []
-
-    def get_popular_recommendations(self, n_recommendations=5):
-        """Get recommendations based on overall popularity"""
+            
+    def _add_diversity(self, recommendations, diversity_weight):
+        """Add diversity to recommendations based on department distribution"""
         try:
-            # Combine train and test matrices if available
-            if hasattr(self, 'test_matrix'):
-                full_matrix = self.test_matrix
-            else:
-                return []
+            # Load product data with department information
+            products_df = pd.read_csv('instacart/static/csv/products.csv')
+            departments_df = pd.read_csv('instacart/static/csv/departments.csv')
             
-            # Calculate aisle popularity
-            aisle_popularity = full_matrix.sum(axis=0).A1
-            top_aisle_indices = np.argsort(aisle_popularity)[-n_recommendations:][::-1]
+            # Merge with departments
+            products_df = products_df.merge(departments_df[['department_id', 'department']], on='department_id')
             
-            recommendations = []
-            for idx in top_aisle_indices:
-                aisle_id = self.idx_to_aisle[idx]
-                score = float(aisle_popularity[idx] / aisle_popularity.max())
-                recommendations.append({
-                    'aisle_id': aisle_id,
-                    'aisle_name': self.aisle_names.get(aisle_id, f"Aisle {aisle_id}"),
-                    'similarity_score': score
-                })
-            
-            return recommendations
+            # Get department distribution
+            dept_dist = {}
+            for rec in recommendations:
+                aisle_id = rec['aisle_id']
+                # Get department for this aisle
+                dept = products_df[products_df['aisle_id'] == aisle_id]['department'].iloc[0]
+                dept_dist[dept] = dept_dist.get(dept, 0) + 1
+                
+            # Adjust scores based on department diversity
+            for rec in recommendations:
+                aisle_id = rec['aisle_id']
+                dept = products_df[products_df['aisle_id'] == aisle_id]['department'].iloc[0]
+                diversity_penalty = (dept_dist[dept] / len(recommendations)) * diversity_weight
+                rec['similarity_score'] *= (1 - diversity_penalty)
+                # Add department info to recommendation
+                rec['department'] = dept
+                
+            return sorted(recommendations, key=lambda x: x['similarity_score'], reverse=True)
             
         except Exception as e:
-            print(f"Error getting popular recommendations: {str(e)}")
-            return []
+            print(f"Error adding diversity: {str(e)}")
+            return recommendations
 
     def calculate_metrics(self, threshold=0.5):
         """Calculate model performance metrics using test data"""
