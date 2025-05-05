@@ -114,3 +114,120 @@ cluster_stats.to_csv('instacart/static/csv/cluster_statistics.csv')
 
 filtered_orders.sort_values('order_id').to_csv('instacart/static/csv/clean_orders.csv', index=False)
 filtered_merged_data.sort_values('order_id').to_csv('instacart/static/csv/clean_merged_data.csv', index=False)
+
+# Aisle Clustering
+print("\nPerforming Aisle Clustering...")
+
+# Crear matriz binaria de interacción pasillo-pedido
+aisle_order_matrix = filtered_merged_data.merge(
+    filtered_orders[['order_id']],
+    on='order_id'
+).merge(
+    pd.read_csv('instacart/static/csv/products.csv')[['product_id', 'aisle_id']],
+    on='product_id'
+).drop_duplicates(subset=['order_id', 'aisle_id'])  # una sola vez por pedido
+
+# Matriz de ocurrencias (filas: orders, columnas: aisles)
+order_aisle_crosstab = aisle_order_matrix.groupby(['order_id', 'aisle_id']).size().unstack(fill_value=0)
+order_aisle_crosstab = (order_aisle_crosstab > 0).astype(int)
+
+# Transponer para tener: filas = aisles, columnas = pedidos
+aisle_matrix = order_aisle_crosstab.T
+
+# Escalar
+scaler = StandardScaler()
+aisle_matrix_scaled = scaler.fit_transform(aisle_matrix)
+
+# Encontrar la k óptima
+wcss_aisles = []
+for k in range(2, 10):
+    kmeans = KMeans(n_clusters=k, random_state=42, n_init=10)
+    kmeans.fit(aisle_matrix_scaled)
+    wcss_aisles.append(kmeans.inertia_)
+
+# Gráfico del codo
+plt.figure(figsize=(8, 5))
+plt.plot(range(2, 10), wcss_aisles, marker='o')
+plt.xlabel('Número de Clusters')
+plt.ylabel('WCSS')
+plt.title('Método del Codo para elegir k (Pasillos por co-ocurrencia)')
+plt.show()
+
+# Aplicar K-Means con k óptimo
+optimal_k_aisles = 6  # o el que decidas tras ver el gráfico
+kmeans_aisles = KMeans(n_clusters=optimal_k_aisles, random_state=42, n_init=10)
+aisle_clusters = kmeans_aisles.fit_predict(aisle_matrix_scaled)
+
+# Crear DataFrame con los resultados
+aisle_info = pd.DataFrame({
+    'aisle_id': aisle_matrix.index,
+    'Cluster': aisle_clusters
+})
+
+# Añadir nombres de pasillos
+aisles_df = pd.read_csv('instacart/static/csv/aisles.csv')
+aisle_info = aisle_info.merge(aisles_df, on='aisle_id')
+
+# Guardar los clusters
+aisle_info.to_csv('instacart/static/csv/aisle_clusters.csv', index=False)
+
+# Estadísticas por cluster
+print("\nAisle Cluster Statistics:")
+aisle_cluster_stats = aisle_info.groupby("Cluster").agg({
+    'aisle_id': 'count'
+}).rename(columns={'aisle_id': 'Number of Aisles'})
+print(aisle_cluster_stats)
+
+# Descripciones opcionales
+print("\nAisle Cluster Descriptions:")
+aisle_cluster_descriptions = {
+    0: "Aisles with strong co-purchase links",
+    1: "Independent or niche aisles",
+    2: "Frequently co-occurring core aisles",
+    3: "Complementary shopping zones",
+    # Agrega descripciones según lo que observes
+}
+
+for cluster, description in aisle_cluster_descriptions.items():
+    print(f"Cluster {cluster}: {description}")
+    cluster_aisles = aisle_info[aisle_info['Cluster'] == cluster]['aisle'].tolist()
+    print(f"Aisles in this cluster:")
+    print(cluster_aisles)
+    print()
+
+# Visualización con t-SNE
+print("\nVisualizando Clusters de Pasillos con t-SNE...")
+
+tsne = TSNE(n_components=2, perplexity=30, n_iter=300, random_state=42)
+aisle_tsne = tsne.fit_transform(aisle_matrix_scaled)
+
+# Preparar para graficar
+aisle_viz = pd.DataFrame(aisle_tsne, columns=['Dim1', 'Dim2'])
+aisle_viz['Cluster'] = aisle_clusters
+aisle_viz['aisle'] = aisle_info['aisle'].values
+
+plt.figure(figsize=(12, 8))
+sns.scatterplot(data=aisle_viz, x='Dim1', y='Dim2', hue='Cluster', palette='tab10', legend='full', alpha=0.7)
+plt.title('Clusters de Pasillos (t-SNE) por co-ocurrencia en pedidos')
+plt.xlabel('Componente 1')
+plt.ylabel('Componente 2')
+plt.grid(True)
+plt.tight_layout()
+plt.show()
+
+# Cargar los datos necesarios
+products_df = pd.read_csv('instacart/static/csv/products.csv')[['product_id', 'aisle_id']]
+
+# Relacionar user_id con productos
+user_product_data = filtered_merged_data.merge(filtered_orders[['order_id', 'user_id']], on='order_id')
+user_product_data = user_product_data.merge(products_df, on='product_id')
+
+# Añadir el cluster de cada usuario
+user_product_data = user_product_data.merge(rfm[['user_id', 'Cluster']], on='user_id')
+
+# Contar cuántos aisle_id únicos hay por cluster
+aisles_por_cluster = user_product_data.groupby('Cluster')['aisle_id'].nunique()
+
+# Mostrar resultados
+print("Cantidad de aisles diferentes comprados por cada user cluster:\n")
+print(aisles_por_cluster)

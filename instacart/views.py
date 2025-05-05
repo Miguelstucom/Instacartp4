@@ -6,7 +6,7 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 from .models import Order, OrderProduct, Product, Aisle, UserSession, Cart
 import pandas as pd
-from .ml_utils import MarketBasketModel, SVDRecommender
+from .ml_utils import MarketBasketModel, SVDRecommender, SVDClusterRecommender, ProductBasketModel, ClusterProductBasketModel
 
 # Create your views here.
 
@@ -96,12 +96,18 @@ def home(request):
         }
         
         # Load both models
+        print("carga el mba")
         mba_model = MarketBasketModel.load_model()
+        print("carga el svd")
         svd_model = SVDRecommender.load_model()
+        print("carga el cluster svd")
+        cluster_svd_model = SVDClusterRecommender.load_model()
+        print("cargados")
         
-        if mba_model is None and svd_model is None:
+        if mba_model is None and svd_model is None and cluster_svd_model is None:
             messages.warning(request, "Recommendation models not available. Please train the models first.")
             return render(request, 'home.html', {'user_id': user_id})
+        print("tarda 2")
         
         # Get user's previous purchases
         products_df, merged_df, orders_df = load_data()
@@ -112,6 +118,65 @@ def home(request):
             products_df[['product_id', 'aisle_id']],
             on='product_id'
         )['aisle_id'].unique().tolist()
+
+        # Get detailed order information for the user
+        user_orders = orders_df[orders_df['user_id'] == user_id].sort_values('order_number')
+        order_details = []
+        triggered_rules = set()
+        
+        for _, order in user_orders.iterrows():
+            # Get products and aisles for this order
+            order_products = merged_df[merged_df['order_id'] == order['order_id']]
+            order_products = order_products.merge(
+                products_df[['product_id', 'product_name', 'aisle_id']],
+                on='product_id'
+            )
+            
+            # Get unique aisles in this order
+            order_aisles = order_products['aisle_id'].unique().tolist()
+            
+            # Check which MBA rules were triggered
+            triggered_rules_in_order = []
+            if mba_model is not None and mba_model.rules is not None:
+                for _, rule in mba_model.rules.iterrows():
+                    antecedents = rule['antecedents']
+                    consequents = rule['consequents']
+                    
+                    # Check if antecedents are in the order
+                    if all(aid in order_aisles for aid in antecedents):
+                        # Check if consequents are also in the order
+                        if any(cid in order_aisles for cid in consequents):
+                            triggered_rules_in_order.append({
+                                'antecedents': [mba_model.aisle_names.get(aid, f"Aisle {aid}") for aid in antecedents],
+                                'consequents': [mba_model.aisle_names.get(cid, f"Aisle {cid}") for cid in consequents],
+                                'confidence': float(rule['confidence']),
+                                'lift': float(rule['lift']),
+                                'support': float(rule['support'])
+                            })
+                            triggered_rules.add((tuple(antecedents), tuple(consequents)))
+            
+            order_details.append({
+                'order_id': order['order_id'],
+                'order_number': order['order_number'],
+                'order_dow': order['order_dow'],
+                'order_hour': order['order_hour_of_day'],
+                'aisles': [mba_model.aisle_names.get(aid, f"Aisle {aid}") for aid in order_aisles],
+                'triggered_rules': triggered_rules_in_order
+            })
+        
+        # Get summary of triggered rules
+        rule_summary = {
+            'total_rules_triggered': len(triggered_rules),
+            'unique_rules': [
+                {
+                    'antecedents': [mba_model.aisle_names.get(aid, f"Aisle {aid}") for aid in antecedents],
+                    'consequents': [mba_model.aisle_names.get(cid, f"Aisle {cid}") for cid in consequents]
+                }
+                for antecedents, consequents in triggered_rules
+            ]
+        }
+
+        print("tarda en datos")
         
         # Initialize context
         context = {
@@ -122,21 +187,23 @@ def home(request):
                 'total_orders': int(user_info['Frequency']),
                 'avg_order_value': float(user_info['Monetary'] / user_info['Frequency']),
                 'days_since_last': int(user_info['Recency'])
-            }
+            },
+            'order_details': order_details,
+            'rule_summary': rule_summary
         }
         
         # Get MBA recommendations if available
         if mba_model is not None:
             # Get recommendations with cluster weights
-            mba_recommendations = mba_model.get_recommendations(user_id=user_id, user_aisles=user_aisles)
+            mba_recommendations = mba_model.get_recommendations(user_id=user_id, user_aisles=user_aisles, n_recommendations=10)
             
             # Sort by the cluster-weighted score
             mba_recommendations.sort(key=lambda x: x['score'], reverse=True)
             
             context.update({
-                'mba_recommendations': mba_recommendations[:5],  # Get top 5 recommendations
+                'mba_recommendations': mba_recommendations,
                 'mba_metrics': mba_model.stored_metrics,
-                'recommended_aisles': mba_recommendations[:5]
+                'recommended_aisles': mba_recommendations
             })
         
         # Get SVD recommendations if available
@@ -202,15 +269,51 @@ def home(request):
         combined_list.sort(key=lambda x: x['combined_score'], reverse=True)
         
         # Get personalized products for each aisle
-        for rec in combined_list:
-            aisle_products = []
-            if mba_model is not None:
-                aisle_products = mba_model.get_aisle_products(user_id, rec['aisle_id'])
-            rec['recommended_products'] = aisle_products
+        
+        # Get cluster-specific product recommendations
+        cluster_product_recommendations = []
+        if cluster_svd_model is not None:
+            cluster_product_recommendations = cluster_svd_model.get_recommendations(user_id, n_recommendations=10)
+        
+        # Get top 10 most sold products for the user's cluster
+        top_sold_products = []
+        try:
+            # Load data
+            products_df, merged_df, orders_df = load_data()
+            user_clusters = pd.read_csv('instacart/static/csv/user_clusters.csv')
+            
+            # Get user's cluster
+            user_cluster = user_clusters[user_clusters['user_id'] == user_id]['Cluster'].iloc[0]
+            
+            # Get users in the same cluster
+            cluster_users = user_clusters[user_clusters['Cluster'] == user_cluster]['user_id'].tolist()
+            
+            # Get top 10 most sold products in the cluster
+            top_products = (merged_df
+                .merge(orders_df[orders_df['user_id'].isin(cluster_users)][['order_id']], on='order_id')
+                .groupby('product_id')
+                .size()
+                .reset_index(name='count')
+                .sort_values('count', ascending=False)
+                .head(10)
+            )
+            
+            # Add product names
+            top_products = top_products.merge(
+                products_df[['product_id', 'product_name']],
+                on='product_id'
+            )
+            
+            # Convert to list of dictionaries
+            top_sold_products = top_products.to_dict('records')
+            
+        except Exception as e:
+            print(f"Error getting top sold products: {str(e)}")
         
         # Add to context
         context['combined_recommendations'] = combined_list
-        
+        context['cluster_product_recommendations'] = cluster_product_recommendations
+        context['top_sold_products'] = top_sold_products
         return render(request, 'home.html', context)
         
     except Exception as e:
@@ -273,6 +376,37 @@ def logout(request):
         del request.session['user_id']
     messages.success(request, 'You have been logged out successfully')
     return redirect('login')
+
+def product_detail(request, product_id):
+    try:
+        # Load product data
+        products_df, merged_df, orders_df = load_data()
+        
+        # Get product details
+        product = products_df[products_df['product_id'] == product_id].iloc[0]
+        
+        # Load product basket model
+        product_basket_model = ClusterProductBasketModel.load_model()
+        
+        # Get frequently bought together recommendations
+        frequently_bought_together = []
+        if product_basket_model is not None and 'user_id' in request.session:
+            frequently_bought_together = product_basket_model.get_recommendations(
+                product_id=product_id,
+                user_id=request.session['user_id'],
+                n_recommendations=5
+            )
+        
+        context = {
+            'product': product,
+            'frequently_bought_together': frequently_bought_together
+        }
+        
+        return render(request, 'product_detail.html', context)
+        
+    except Exception as e:
+        messages.error(request, f'Error loading product details: {str(e)}')
+        return redirect('home')
 
 
 

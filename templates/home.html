@@ -8,6 +8,44 @@
         <p class="lead">Discover personalized recommendations based on your shopping history.</p>
     </div>
 
+    <!-- Top Sold Products Carousel -->
+    {% if top_sold_products %}
+    <div class="top-sold-products mb-4">
+        <div class="card">
+            <div class="card-header bg-primary text-white">
+                <h3 class="h5 mb-0">Top 10 Most Popular Products in Your Cluster</h3>
+            </div>
+            <div class="card-body">
+                <div id="topProductsCarousel" class="carousel slide" data-bs-ride="carousel">
+                    <div class="carousel-inner">
+                        {% for product in top_sold_products %}
+                        <div class="carousel-item {% if forloop.first %}active{% endif %}">
+                            <div class="d-flex justify-content-center">
+                                <div class="product-card text-center p-4">
+                                    <h4>{{ product.product_name }}</h4>
+                                    <p class="text-muted">Times purchased: {{ product.count }}</p>
+                                    <a href="{% url 'product_detail' product.product_id %}" class="btn btn-primary">
+                                        View Details
+                                    </a>
+                                </div>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                    <button class="carousel-control-prev" type="button" data-bs-target="#topProductsCarousel" data-bs-slide="prev">
+                        <span class="carousel-control-prev-icon" aria-hidden="true"></span>
+                        <span class="visually-hidden">Previous</span>
+                    </button>
+                    <button class="carousel-control-next" type="button" data-bs-target="#topProductsCarousel" data-bs-slide="next">
+                        <span class="carousel-control-next-icon" aria-hidden="true"></span>
+                        <span class="visually-hidden">Next</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
     <!-- Add this section after the welcome section -->
     <div class="user-profile mb-4">
         <div class="card">
@@ -105,20 +143,38 @@
                     </div>
                 </div>
                 <div class="card-body">
-                    <div class="row">
+                    <div class="recommendations-list">
                         {% for rec in mba_recommendations %}
-                        <div class="col-md-6 mb-3">
-                            <div class="recommendation-card">
-                                <h5>{{ rec.aisle_name }}</h5>
-                                <div class="metrics">
-                                    <span class="badge bg-info">Confidence: {{ rec.confidence|floatformat:2 }}</span>
-                                    <span class="badge bg-success">Lift: {{ rec.lift|floatformat:2 }}</span>
-                                    <span class="badge bg-primary">Score: {{ rec.score|floatformat:2 }}</span>
-                                </div>
-                                <div class="cluster-info mt-2">
-                                    <small class="text-muted">Cluster {{ rec.cluster }} weighted</small>
+                        <div class="recommendation-item mb-3 p-3 border rounded {% if rec.previously_bought %}bg-light{% endif %}">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <h5 class="mb-0">
+                                    {{ rec.aisle_name }}
+                                    {% if rec.previously_bought %}
+                                    <span class="badge bg-info">Previously Bought</span>
+                                    {% endif %}
+                                </h5>
+                                <span class="badge bg-primary">Score: {{ rec.score|floatformat:2 }}</span>
+                            </div>
+                            <div class="rule-metrics mt-2">
+                                <span class="badge bg-success me-1">Confidence: {{ rec.confidence|floatformat:2 }}</span>
+                                <span class="badge bg-warning me-1">Lift: {{ rec.lift|floatformat:2 }}</span>
+                                <span class="badge bg-info">Support: {{ rec.support|floatformat:2 }}</span>
+                            </div>
+                            {% if rec.recommended_products %}
+                            <div class="recommended-products mt-2">
+                                <h6>Recommended Products:</h6>
+                                <div class="product-list">
+                                    {% for product in rec.recommended_products %}
+                                    <div class="product-item {% if product.previously_bought %}previously-bought{% endif %}">
+                                        <i class="fas {% if product.previously_bought %}fa-check-circle{% else %}fa-plus-circle{% endif %}"></i>
+                                        <a href="{% url 'product_detail' product.product_id %}" class="text-decoration-none">
+                                            {{ product.product_name }}
+                                        </a>
+                                    </div>
+                                    {% endfor %}
                                 </div>
                             </div>
+                            {% endif %}
                         </div>
                         {% endfor %}
                     </div>
@@ -231,7 +287,9 @@
                                         {% for product in rec.recommended_products %}
                                         <div class="product-item {% if product.previously_bought %}previously-bought{% endif %}">
                                             <i class="fas {% if product.previously_bought %}fa-history{% else %}fa-star{% endif %}"></i>
-                                            {{ product.product_name }}
+                                            <a href="{% url 'product_detail' product.product_id %}" class="text-decoration-none">
+                                                {{ product.product_name }}
+                                            </a>
                                         </div>
                                         {% endfor %}
                                     </div>
@@ -241,6 +299,108 @@
                         </div>
                     </div>
                     {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Cluster-Specific Product Recommendations -->
+    <div class="cluster-product-recommendations mt-5">
+        <div class="card">
+            <div class="card-header bg-info text-white">
+                <h3 class="h5 mb-0">Personalized Product Recommendations</h3>
+                <small>Based on your customer segment</small>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    {% for product in cluster_product_recommendations %}
+                    <div class="col-md-4 mb-3">
+                        <div class="product-card">
+                            <div class="product-header">
+                                <h5>
+                                    <a href="{% url 'product_detail' product.product_id %}" class="text-decoration-none">
+                                        {{ product.product_name }}
+                                    </a>
+                                </h5>
+                                <span class="badge bg-primary">Score: {{ product.similarity_score|floatformat:2 }}</span>
+                            </div>
+                            <div class="product-metrics">
+                                <span class="badge bg-info">Cluster: {{ product.cluster }}</span>
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="user-metrics mt-4">
+        <div class="card">
+            <div class="card-header bg-info text-white">
+                <h3 class="h5 mb-0">User Orders Analysis</h3>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-6">
+                        <h4>Order History</h4>
+                        <div class="order-list">
+                            {% for order in order_details %}
+                            <div class="order-item mb-3 p-3 border rounded">
+                                <h5>Order #{{ order.order_number }}</h5>
+                                <p class="mb-1">
+                                    <i class="fas fa-calendar"></i> Day: {{ order.order_dow }} | 
+                                    <i class="fas fa-clock"></i> Hour: {{ order.order_hour }}
+                                </p>
+                                <div class="aisles-section">
+                                    <h6>Aisles Purchased:</h6>
+                                    <div class="aisle-tags">
+                                        {% for aisle in order.aisles %}
+                                        <span class="badge bg-secondary me-1">{{ aisle }}</span>
+                                        {% endfor %}
+                                    </div>
+                                </div>
+                                {% if order.triggered_rules %}
+                                <div class="rules-section mt-2">
+                                    <h6>Triggered MBA Rules:</h6>
+                                    {% for rule in order.triggered_rules %}
+                                    <div class="rule-item p-2 bg-light rounded mb-1">
+                                        <p class="mb-1">
+                                            <strong>If:</strong> {{ rule.antecedents|join:", " }}<br>
+                                            <strong>Then:</strong> {{ rule.consequents|join:", " }}
+                                        </p>
+                                        <div class="rule-metrics">
+                                            <span class="badge bg-primary me-1">Confidence: {{ rule.confidence|floatformat:2 }}</span>
+                                            <span class="badge bg-success me-1">Lift: {{ rule.lift|floatformat:2 }}</span>
+                                            <span class="badge bg-info">Support: {{ rule.support|floatformat:2 }}</span>
+                                        </div>
+                                    </div>
+                                    {% endfor %}
+                                </div>
+                                {% endif %}
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <h4>MBA Rules Summary</h4>
+                        <div class="card">
+                            <div class="card-body">
+                                <h5>Total Rules Triggered: {{ rule_summary.total_rules_triggered }}</h5>
+                                <div class="unique-rules mt-3">
+                                    <h6>Unique Rules:</h6>
+                                    {% for rule in rule_summary.unique_rules %}
+                                    <div class="rule-item p-2 bg-light rounded mb-2">
+                                        <p class="mb-1">
+                                            <strong>If:</strong> {{ rule.antecedents|join:", " }}<br>
+                                            <strong>Then:</strong> {{ rule.consequents|join:", " }}
+                                        </p>
+                                    </div>
+                                    {% endfor %}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -393,6 +553,90 @@
 
 .product-item.previously-bought i {
     color: #0d6efd;
+}
+
+.order-item {
+    background: white;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.aisle-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+}
+
+.rule-item {
+    border-left: 3px solid #0d6efd;
+}
+
+.rule-metrics {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+}
+
+/* Cluster Product Recommendations Styles */
+.cluster-product-recommendations .product-card {
+    background: white;
+    padding: 1rem;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    height: 100%;
+    transition: transform 0.2s;
+}
+
+.cluster-product-recommendations .product-card:hover {
+    transform: translateY(-2px);
+}
+
+.cluster-product-recommendations .product-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 0.5rem;
+}
+
+.cluster-product-recommendations .product-header h5 {
+    margin: 0;
+    flex: 1;
+    margin-right: 0.5rem;
+}
+
+.cluster-product-recommendations .product-metrics {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+/* Top Sold Products Carousel Styles */
+.top-sold-products .product-card {
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    transition: transform 0.2s;
+    max-width: 500px;
+    width: 100%;
+}
+
+.top-sold-products .product-card:hover {
+    transform: translateY(-2px);
+}
+
+.top-sold-products .carousel-control-prev,
+.top-sold-products .carousel-control-next {
+    width: 5%;
+}
+
+.top-sold-products .carousel-control-prev-icon,
+.top-sold-products .carousel-control-next-icon {
+    background-color: rgba(0,0,0,0.5);
+    border-radius: 50%;
+    padding: 1.5rem;
+}
+
+.top-sold-products .carousel-item {
+    padding: 1rem;
 }
 </style>
 {% endblock %}
