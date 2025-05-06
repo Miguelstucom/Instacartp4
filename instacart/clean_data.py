@@ -65,7 +65,7 @@ plt.title('Método del Codo para elegir k')
 plt.show()
 
 # Aplicar K-Means con el k óptimo
-optimal_k = 5  # Puedes cambiarlo según el gráfico
+optimal_k = 4  # Puedes cambiarlo según el gráfico
 kmeans = KMeans(n_clusters=optimal_k, random_state=42, n_init=10)
 rfm["Cluster"] = kmeans.fit_predict(rfm_scaled)
 

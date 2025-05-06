@@ -11,6 +11,7 @@ from scipy.sparse import csr_matrix
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, mean_squared_error, mean_absolute_error
 import joblib
 import matplotlib.pyplot as plt
+import os
 
 #MBA AISLE
 class MarketBasketModel:
@@ -523,6 +524,20 @@ class SVDRecommender:
             print(f"MSE: {mse:.4f}")
             print(f"RMSE: {rmse:.4f}")
 
+            # Calculate classification metrics
+            threshold = 0.5
+            predicted = (reconstructed >= threshold).astype(int)
+            true_positives = np.sum((test_dense > 0) & (predicted > 0))
+            false_positives = np.sum((test_dense == 0) & (predicted > 0))
+            true_negatives = np.sum((test_dense == 0) & (predicted == 0))
+            false_negatives = np.sum((test_dense > 0) & (predicted == 0))
+            
+            total = true_positives + false_positives + true_negatives + false_negatives
+            accuracy = (true_positives + true_negatives) / total if total > 0 else 0
+            precision = true_positives / (true_positives + false_positives) if (true_positives + false_positives) > 0 else 0
+            recall = true_positives / (true_positives + false_negatives) if (true_positives + false_negatives) > 0 else 0
+            f1_score = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
+
             # Calculate ranking metrics
             print("\nCalculating ranking metrics...")
             ranking_metrics = calculate_ranking_metrics(test_dense, reconstructed)
@@ -536,13 +551,24 @@ class SVDRecommender:
 
             # Store metrics
             self.stored_metrics = {
-                'accuracy': (test_dense > 0).mean(),
-                'precision': (test_dense > 0).mean(),
-                'recall': (test_dense > 0).mean(),
-                'f1_score': 2 * (test_dense > 0).mean() * (test_dense > 0).mean() / ((test_dense > 0).mean() + (test_dense > 0).mean()) if (test_dense > 0).mean() > 0 and (test_dense > 0).mean() > 0 else 0,
+                'accuracy': accuracy,
+                'precision': precision,
+                'recall': recall,
+                'f1_score': f1_score,
                 'rmse': rmse,
+                'mse': mse,
+                'true_positives': int(true_positives),
+                'false_positives': int(false_positives),
+                'true_negatives': int(true_negatives),
+                'false_negatives': int(false_negatives),
                 'ranking_metrics': ranking_metrics
             }
+
+            print("\nClassification Metrics:")
+            print(f"Accuracy: {accuracy:.4f}")
+            print(f"Precision: {precision:.4f}")
+            print(f"Recall: {recall:.4f}")
+            print(f"F1 Score: {f1_score:.4f}")
             
             return True
             
@@ -841,6 +867,72 @@ class SVDClusterRecommender:
             print(f"Error loading data: {str(e)}")
             return None, None, None, None
 
+    def plot_cluster_explained_variance(self, cluster_id):
+        """Plot individual and cumulative explained variance for a specific cluster"""
+        if cluster_id not in self.cluster_models:
+            print(f"No model available for cluster {cluster_id}. Train the model first.")
+            return
+
+        try:
+            # Get SVD components for this cluster
+            S = self.cluster_models[cluster_id]['S']
+            
+            # Calculate explained variance
+            explained_variance = (S ** 2) / (S ** 2).sum()
+            cumulative_variance = np.cumsum(explained_variance)
+            
+            # Find number of components needed for 95% variance
+            components_95 = np.argmax(cumulative_variance >= 0.95) + 1
+            
+            # Create figure with two subplots
+            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 5))
+            
+            # Plot individual explained variance
+            ax1.bar(range(1, len(explained_variance) + 1), explained_variance)
+            ax1.set_xlabel('Component')
+            ax1.set_ylabel('Explained Variance')
+            ax1.set_title(f'Individual Explained Variance - Cluster {cluster_id}')
+            
+            # Plot cumulative explained variance
+            ax2.plot(range(1, len(cumulative_variance) + 1), cumulative_variance, 'b-')
+            # Add horizontal line at 95%
+            ax2.axhline(y=0.95, color='r', linestyle='--', alpha=0.5, label='95% Variance')
+            # Add vertical line at components needed for 95%
+            ax2.axvline(x=components_95, color='g', linestyle='--', alpha=0.5, 
+                       label=f'Components needed: {components_95}')
+            ax2.set_xlabel('Component')
+            ax2.set_ylabel('Cumulative Explained Variance')
+            ax2.set_title(f'Cumulative Explained Variance - Cluster {cluster_id}')
+            ax2.legend()
+            
+            # Add grid and adjust layout
+            ax1.grid(True, alpha=0.3)
+            ax2.grid(True, alpha=0.3)
+            plt.tight_layout()
+            
+            # Create directory if it doesn't exist
+            os.makedirs('instacart/static/images', exist_ok=True)
+            
+            # Save the plot
+            plot_path = f'instacart/static/images/explained_variance_cluster_{cluster_id}.png'
+            plt.savefig(plot_path)
+            plt.close()
+            
+            print(f"Plot saved successfully to {plot_path}")
+            
+            # Print some statistics
+            print(f"\nExplained Variance Statistics for Cluster {cluster_id}:")
+            print(f"Total variance explained by {self.n_components} components: {cumulative_variance[self.n_components-1]:.2%}")
+            print(f"Variance explained by first component: {explained_variance[0]:.2%}")
+            print(f"Variance explained by last component: {explained_variance[self.n_components-1]:.2%}")
+            print(f"Number of components needed for 95% variance: {components_95}")
+            
+            return True
+            
+        except Exception as e:
+            print(f"Error generating plot for cluster {cluster_id}: {str(e)}")
+            return False
+
     def train_model(self, test_size=0.2, random_state=42):
         """Train separate SVD models for each user cluster"""
         merged_df, orders_df, products_df, user_clusters = self.load_data()
@@ -922,10 +1014,29 @@ class SVDClusterRecommender:
                 S = S[:self.n_components]
                 Vh = Vh[:self.n_components, :]
                 
+                # Store model components
+                self.cluster_models[cluster_id] = {
+                    'U': U,
+                    'S': S,
+                    'Vh': Vh,
+                    'normalized_matrix': None,  # Will be set after transformation
+                    'user_to_idx': user_to_idx,
+                    'product_to_idx': product_to_idx,
+                    'idx_to_product': idx_to_product,
+                    'metrics': None  # Will be set after metrics calculation
+                }
+                
+                # Plot explained variance for this cluster
+                print(f"\nGenerating explained variance plot for cluster {cluster_id}...")
+                plot_success = self.plot_cluster_explained_variance(cluster_id)
+                if not plot_success:
+                    print(f"Warning: Failed to generate plot for cluster {cluster_id}")
+                
                 # Transform the training data
                 transformed_matrix = U * S
                 normalized_matrix = normalize(transformed_matrix)
-                
+                self.cluster_models[cluster_id]['normalized_matrix'] = normalized_matrix
+
                 # Make predictions on test set
                 test_dense = test_matrix.toarray()
                 test_transformed = test_dense @ Vh.T
@@ -963,32 +1074,29 @@ class SVDClusterRecommender:
                 print(f"Hit Rate@{self.n_components}: {ranking_metrics['hit_rate@k']:.4f}")
                 
                 # Store model and metrics
-                self.cluster_models[cluster_id] = {
-                    'U': U,
-                    'S': S,
-                    'Vh': Vh,
-                    'normalized_matrix': normalized_matrix,
-                    'user_to_idx': user_to_idx,
-                    'product_to_idx': product_to_idx,
-                    'idx_to_product': idx_to_product,
-                    'metrics': {
-                        'rmse': rmse,
-                        'mae': mae,
-                        'accuracy': accuracy,
-                        'precision': precision,
-                        'recall': recall,
-                        'f1_score': f1,
-                        'ranking_metrics': ranking_metrics
-                    }
+                self.cluster_models[cluster_id]['metrics'] = {
+                    'rmse': rmse,
+                    'mae': mae,
+                    'accuracy': accuracy,
+                    'precision': precision,
+                    'recall': recall,
+                    'f1_score': f1,
+                    'ranking_metrics': ranking_metrics
                 }
                 
                 print(f"Cluster {cluster_id} model trained successfully with metrics:")
-                print(f"RMSE: {rmse:.4f}")
-                print(f"MAE: {mae:.4f}")
                 print(f"Accuracy: {accuracy:.3f}")
                 print(f"Precision: {precision:.3f}")
                 print(f"Recall: {recall:.3f}")
                 print(f"F1 Score: {f1:.3f}")
+                print(f"Average Lift: {self.cluster_models[cluster_id]['metrics']['avg_lift']:.3f}")
+                print(f"Average Confidence: {self.cluster_models[cluster_id]['metrics']['avg_confidence']:.3f}")
+                print(f"Average Support: {self.cluster_models[cluster_id]['metrics']['avg_support']:.3f}")
+                print(f"Total Rules: {self.cluster_models[cluster_id]['metrics']['total_rules']}")
+                print(f"True Positives: {self.cluster_models[cluster_id]['metrics']['true_positives']}")
+                print(f"False Positives: {self.cluster_models[cluster_id]['metrics']['false_positives']}")
+                print(f"True Negatives: {self.cluster_models[cluster_id]['metrics']['true_negatives']}")
+                print(f"False Negatives: {self.cluster_models[cluster_id]['metrics']['false_negatives']}")
                 
             except Exception as e:
                 print(f"Error training model for cluster {cluster_id}: {str(e)}")
@@ -1130,7 +1238,7 @@ class ClusterProductBasketModel:
                 .size()
                 .reset_index(name='count')
                 .sort_values('count', ascending=False)
-                .head(2000)
+                .head(1500)
             )
             
             # Filter data to only include top 2000 products
@@ -1194,6 +1302,14 @@ class ClusterProductBasketModel:
                     print(f"Precision: {metrics['precision']:.3f}")
                     print(f"Recall: {metrics['recall']:.3f}")
                     print(f"F1 Score: {metrics['f1_score']:.3f}")
+                    print(f"Average Lift: {metrics['avg_lift']:.3f}")
+                    print(f"Average Confidence: {metrics['avg_confidence']:.3f}")
+                    print(f"Average Support: {metrics['avg_support']:.3f}")
+                    print(f"Total Rules: {metrics['total_rules']}")
+                    print(f"True Positives: {metrics['true_positives']}")
+                    print(f"False Positives: {metrics['false_positives']}")
+                    print(f"True Negatives: {metrics['true_negatives']}")
+                    print(f"False Negatives: {metrics['false_negatives']}")
                 else:
                     print(f"No frequent itemsets found for cluster {cluster_id}")
 
@@ -1255,21 +1371,35 @@ class ClusterProductBasketModel:
             true_negatives = 0
             false_negatives = 0
             
+            # Calculate average rule metrics
+            avg_lift = rules['lift'].mean()
+            avg_confidence = rules['confidence'].mean()
+            avg_support = rules['support'].mean()
+            total_rules = len(rules)
+            
             for _, rule in rules.iterrows():
                 antecedent_cols = rule['antecedents']
                 consequent_cols = rule['consequents']
                 
+                # Find orders in test set that contain antecedents
                 antecedent_mask = test_matrix[antecedent_cols].all(axis=1)
                 orders_with_antecedents = test_matrix[antecedent_mask]
                 
                 if len(orders_with_antecedents) > 0:
+                    # Check if these orders also contain consequents
                     consequent_present = orders_with_antecedents[consequent_cols].any(axis=1)
+                    
+                    # Update metrics
                     true_positives += consequent_present.sum()
                     false_positives += (~consequent_present).sum()
                 
+                # Check for orders without antecedents
                 orders_without_antecedents = test_matrix[~antecedent_mask]
                 if len(orders_without_antecedents) > 0:
+                    # Check if these orders contain consequents
                     consequent_present = orders_without_antecedents[consequent_cols].any(axis=1)
+                    
+                    # Update metrics
                     false_negatives += consequent_present.sum()
                     true_negatives += (~consequent_present).sum()
             
@@ -1277,11 +1407,25 @@ class ClusterProductBasketModel:
             if total == 0:
                 return None
             
+            # Calculate classification metrics
+            accuracy = (true_positives + true_negatives) / total
+            precision = true_positives / (true_positives + false_positives) if (true_positives + false_positives) > 0 else 0
+            recall = true_positives / (true_positives + false_negatives) if (true_positives + false_negatives) > 0 else 0
+            f1_score = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
+            
             metrics = {
-                'accuracy': (true_positives + true_negatives) / total,
-                'precision': true_positives / (true_positives + false_positives) if (true_positives + false_positives) > 0 else 0,
-                'recall': true_positives / (true_positives + false_negatives) if (true_positives + false_negatives) > 0 else 0,
-                'f1_score': 2 * (true_positives / (true_positives + false_positives)) * (true_positives / (true_positives + false_negatives)) / ((true_positives / (true_positives + false_positives)) + (true_positives / (true_positives + false_negatives))) if (true_positives + false_positives) > 0 and (true_positives + false_negatives) > 0 else 0
+                'accuracy': accuracy,
+                'precision': precision,
+                'recall': recall,
+                'f1_score': f1_score,
+                'avg_lift': avg_lift,
+                'avg_confidence': avg_confidence,
+                'avg_support': avg_support,
+                'total_rules': total_rules,
+                'true_positives': true_positives,
+                'false_positives': false_positives,
+                'true_negatives': true_negatives,
+                'false_negatives': false_negatives
             }
             
             return metrics
@@ -1317,7 +1461,7 @@ class ClusterProductBasketModel:
                 return model
         except Exception as e:
             print(f"Error loading model: {str(e)}")
-            return None 
+            return None
 
 def calculate_ranking_metrics(y_true, y_pred, k=5):
     """Calculate ranking metrics for recommendations
