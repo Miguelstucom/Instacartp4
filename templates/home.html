@@ -3,10 +3,6 @@
 {% block content %}
 <div class="recommendation-dashboard">
     <!-- Welcome Section -->
-    <div class="welcome-section mb-4">
-        <h1 class="display-5">Welcome to Smart Market</h1>
-        <p class="lead">Discover personalized recommendations based on your shopping history.</p>
-    </div>
 
     <!-- Top Sold Products Carousel -->
     {% if top_sold_products %}
@@ -160,6 +156,30 @@
                                 <span class="badge bg-warning me-1">Lift: {{ rec.lift|floatformat:2 }}</span>
                                 <span class="badge bg-info">Support: {{ rec.support|floatformat:2 }}</span>
                             </div>
+                            {% if rec.top_products %}
+                            <div class="top-products mt-3">
+                                <div class="d-flex align-items-center mb-2">
+                                    <i class="fas fa-crown text-warning me-2"></i>
+                                    <h6 class="mb-0">Top Products in this Aisle</h6>
+                                </div>
+                                <div class="top-products-list">
+                                    {% for product in rec.top_products %}
+                                    <div class="top-product-item">
+                                        <div class="rank-badge">{{ forloop.counter }}</div>
+                                        <div class="product-info">
+                                            <a href="{% url 'product_detail' product.product_id %}" class="product-name">
+                                                {{ product.product_name }}
+                                            </a>
+                                            <div class="purchase-count">
+                                                <i class="fas fa-users"></i>
+                                                <span>{{ product.cluster_count }} purchases in your cluster</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    {% endfor %}
+                                </div>
+                            </div>
+                            {% endif %}
                             {% if rec.recommended_products %}
                             <div class="recommended-products mt-2">
                                 <h6>Recommended Products:</h6>
@@ -230,6 +250,30 @@
                                 <div class="metrics">
                                     <span class="badge bg-primary">Similarity: {{ rec.similarity_score|floatformat:2 }}</span>
                                 </div>
+                                {% if rec.top_products %}
+                                <div class="top-products mt-3">
+                                    <div class="d-flex align-items-center mb-2">
+                                        <i class="fas fa-crown text-warning me-2"></i>
+                                        <h6 class="mb-0">Top Products in this Aisle</h6>
+                                    </div>
+                                    <div class="top-products-list">
+                                        {% for product in rec.top_products %}
+                                        <div class="top-product-item">
+                                            <div class="rank-badge">{{ forloop.counter }}</div>
+                                            <div class="product-info">
+                                                <a href="{% url 'product_detail' product.product_id %}" class="product-name">
+                                                    {{ product.product_name }}
+                                                </a>
+                                                <div class="purchase-count">
+                                                    <i class="fas fa-users"></i>
+                                                    <span>{{ product.cluster_count }} purchases in your cluster</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        {% endfor %}
+                                    </div>
+                                </div>
+                                {% endif %}
                             </div>
                         </div>
                         {% endfor %}
@@ -242,63 +286,68 @@
     <!-- Add this after the SVD recommendations section -->
     <div class="combined-recommendations mt-5">
         <div class="card">
-            <div class="card-header bg-dark text-white">
+            <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center">
                 <h3 class="h5 mb-0">Combined Recommendations</h3>
+                <button class="btn btn-sm btn-light" type="button" data-bs-toggle="collapse" data-bs-target="#combinedRecommendations" aria-expanded="true" aria-controls="combinedRecommendations">
+                    Show/Hide
+                </button>
             </div>
-            <div class="card-body">
-                <div class="row">
-                    {% for rec in combined_recommendations %}
-                    <div class="col-md-4 mb-3">
-                        <div class="recommendation-card">
-                            <h5>{{ rec.aisle_name }}</h5>
-                            <div class="recommendation-sources mb-2">
-                                {% for source in rec.sources %}
-                                <span class="badge {% if source == 'MBA' %}bg-primary{% else %}bg-success{% endif %}">
-                                    {{ source }}
-                                </span>
-                                {% endfor %}
-                            </div>
-                            <div class="recommendation-details">
-                                {% if 'MBA' in rec.sources %}
-                                <div class="mba-metrics">
-                                    <small class="text-muted">MBA Metrics:</small>
-                                    <div class="metrics-grid">
-                                        <span class="badge bg-info">Confidence: {{ rec.mba_confidence|floatformat:2 }}</span>
-                                        <span class="badge bg-warning">Lift: {{ rec.mba_lift|floatformat:2 }}</span>
-                                    </div>
+            <div class="collapse show" id="combinedRecommendations">
+                <div class="card-body">
+                    <div class="row">
+                        {% for rec in combined_recommendations %}
+                        <div class="col-md-4 mb-3">
+                            <div class="recommendation-card">
+                                <h5>{{ rec.aisle_name }}</h5>
+                                <div class="recommendation-sources mb-2">
+                                    {% for source in rec.sources %}
+                                    <span class="badge {% if source == 'MBA' %}bg-primary{% else %}bg-success{% endif %}">
+                                        {{ source }}
+                                    </span>
+                                    {% endfor %}
                                 </div>
-                                {% endif %}
-                                {% if 'SVD' in rec.sources %}
-                                <div class="svd-metrics">
-                                    <small class="text-muted">SVD Score:</small>
-                                    <span class="badge bg-info">{{ rec.svd_score|floatformat:2 }}</span>
-                                </div>
-                                {% endif %}
-                                <div class="combined-score mt-2">
-                                    <small class="text-muted">Combined Score:</small>
-                                    <span class="badge bg-dark">{{ rec.combined_score|floatformat:2 }}</span>
-                                </div>
-                                
-                                <!-- Add recommended products section -->
-                                {% if rec.recommended_products %}
-                                <div class="recommended-products mt-3">
-                                    <small class="text-muted">Recommended Products:</small>
-                                    <div class="product-list">
-                                        {% for product in rec.recommended_products %}
-                                        <div class="product-item {% if product.previously_bought %}previously-bought{% endif %}">
-                                            <i class="fas {% if product.previously_bought %}fa-history{% else %}fa-star{% endif %}"></i>
-                                            <a href="{% url 'product_detail' product.product_id %}" class="text-decoration-none">
-                                                {{ product.product_name }}
-                                            </a>
+                                <div class="recommendation-details">
+                                    {% if 'MBA' in rec.sources %}
+                                    <div class="mba-metrics">
+                                        <small class="text-muted">MBA Metrics:</small>
+                                        <div class="metrics-grid">
+                                            <span class="badge bg-info">Confidence: {{ rec.mba_confidence|floatformat:2 }}</span>
+                                            <span class="badge bg-warning">Lift: {{ rec.mba_lift|floatformat:2 }}</span>
                                         </div>
-                                        {% endfor %}
                                     </div>
+                                    {% endif %}
+                                    {% if 'SVD' in rec.sources %}
+                                    <div class="svd-metrics">
+                                        <small class="text-muted">SVD Score:</small>
+                                        <span class="badge bg-info">{{ rec.svd_score|floatformat:2 }}</span>
+                                    </div>
+                                    {% endif %}
+                                    <div class="combined-score mt-2">
+                                        <small class="text-muted">Combined Score:</small>
+                                        <span class="badge bg-dark">{{ rec.combined_score|floatformat:2 }}</span>
+                                    </div>
+                                    
+                                    <!-- Add recommended products section -->
+                                    {% if rec.recommended_products %}
+                                    <div class="recommended-products mt-3">
+                                        <small class="text-muted">Recommended Products:</small>
+                                        <div class="product-list">
+                                            {% for product in rec.recommended_products %}
+                                            <div class="product-item {% if product.previously_bought %}previously-bought{% endif %}">
+                                                <i class="fas {% if product.previously_bought %}fa-history{% else %}fa-star{% endif %}"></i>
+                                                <a href="{% url 'product_detail' product.product_id %}" class="text-decoration-none">
+                                                    {{ product.product_name }}
+                                                </a>
+                                            </div>
+                                            {% endfor %}
+                                        </div>
+                                    </div>
+                                    {% endif %}
                                 </div>
-                                {% endif %}
                             </div>
                         </div>
+                        {% endfor %}
                     </div>
-                    {% endfor %}
                 </div>
             </div>
         </div>
@@ -337,66 +386,71 @@
 
     <div class="user-metrics mt-4">
         <div class="card">
-            <div class="card-header bg-info text-white">
+            <div class="card-header bg-info text-white d-flex justify-content-between align-items-center">
                 <h3 class="h5 mb-0">User Orders Analysis</h3>
+                <button class="btn btn-sm btn-light" type="button" data-bs-toggle="collapse" data-bs-target="#userOrdersAnalysis" aria-expanded="true" aria-controls="userOrdersAnalysis">
+                    Show/Hide
+                </button>
             </div>
-            <div class="card-body">
-                <div class="row">
-                    <div class="col-md-6">
-                        <h4>Order History</h4>
-                        <div class="order-list">
-                            {% for order in order_details %}
-                            <div class="order-item mb-3 p-3 border rounded">
-                                <h5>Order #{{ order.order_number }}</h5>
-                                <p class="mb-1">
-                                    <i class="fas fa-calendar"></i> Day: {{ order.order_dow }} | 
-                                    <i class="fas fa-clock"></i> Hour: {{ order.order_hour }}
-                                </p>
-                                <div class="aisles-section">
-                                    <h6>Aisles Purchased:</h6>
-                                    <div class="aisle-tags">
-                                        {% for aisle in order.aisles %}
-                                        <span class="badge bg-secondary me-1">{{ aisle }}</span>
-                                        {% endfor %}
-                                    </div>
-                                </div>
-                                {% if order.triggered_rules %}
-                                <div class="rules-section mt-2">
-                                    <h6>Triggered MBA Rules:</h6>
-                                    {% for rule in order.triggered_rules %}
-                                    <div class="rule-item p-2 bg-light rounded mb-1">
-                                        <p class="mb-1">
-                                            <strong>If:</strong> {{ rule.antecedents|join:", " }}<br>
-                                            <strong>Then:</strong> {{ rule.consequents|join:", " }}
-                                        </p>
-                                        <div class="rule-metrics">
-                                            <span class="badge bg-primary me-1">Confidence: {{ rule.confidence|floatformat:2 }}</span>
-                                            <span class="badge bg-success me-1">Lift: {{ rule.lift|floatformat:2 }}</span>
-                                            <span class="badge bg-info">Support: {{ rule.support|floatformat:2 }}</span>
+            <div class="collapse show" id="userOrdersAnalysis">
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <h4>Order History</h4>
+                            <div class="order-list">
+                                {% for order in order_details %}
+                                <div class="order-item mb-3 p-3 border rounded">
+                                    <h5>Order #{{ order.order_number }}</h5>
+                                    <p class="mb-1">
+                                        <i class="fas fa-calendar"></i> Day: {{ order.order_dow }} | 
+                                        <i class="fas fa-clock"></i> Hour: {{ order.order_hour }}
+                                    </p>
+                                    <div class="aisles-section">
+                                        <h6>Aisles Purchased:</h6>
+                                        <div class="aisle-tags">
+                                            {% for aisle in order.aisles %}
+                                            <span class="badge bg-secondary me-1">{{ aisle }}</span>
+                                            {% endfor %}
                                         </div>
                                     </div>
-                                    {% endfor %}
-                                </div>
-                                {% endif %}
-                            </div>
-                            {% endfor %}
-                        </div>
-                    </div>
-                    <div class="col-md-6">
-                        <h4>MBA Rules Summary</h4>
-                        <div class="card">
-                            <div class="card-body">
-                                <h5>Total Rules Triggered: {{ rule_summary.total_rules_triggered }}</h5>
-                                <div class="unique-rules mt-3">
-                                    <h6>Unique Rules:</h6>
-                                    {% for rule in rule_summary.unique_rules %}
-                                    <div class="rule-item p-2 bg-light rounded mb-2">
-                                        <p class="mb-1">
-                                            <strong>If:</strong> {{ rule.antecedents|join:", " }}<br>
-                                            <strong>Then:</strong> {{ rule.consequents|join:", " }}
-                                        </p>
+                                    {% if order.triggered_rules %}
+                                    <div class="rules-section mt-2">
+                                        <h6>Triggered MBA Rules:</h6>
+                                        {% for rule in order.triggered_rules %}
+                                        <div class="rule-item p-2 bg-light rounded mb-1">
+                                            <p class="mb-1">
+                                                <strong>If:</strong> {{ rule.antecedents|join:", " }}<br>
+                                                <strong>Then:</strong> {{ rule.consequents|join:", " }}
+                                            </p>
+                                            <div class="rule-metrics">
+                                                <span class="badge bg-primary me-1">Confidence: {{ rule.confidence|floatformat:2 }}</span>
+                                                <span class="badge bg-success me-1">Lift: {{ rule.lift|floatformat:2 }}</span>
+                                                <span class="badge bg-info">Support: {{ rule.support|floatformat:2 }}</span>
+                                            </div>
+                                        </div>
+                                        {% endfor %}
                                     </div>
-                                    {% endfor %}
+                                    {% endif %}
+                                </div>
+                                {% endfor %}
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <h4>MBA Rules Summary</h4>
+                            <div class="card">
+                                <div class="card-body">
+                                    <h5>Total Rules Triggered: {{ rule_summary.total_rules_triggered }}</h5>
+                                    <div class="unique-rules mt-3">
+                                        <h6>Unique Rules:</h6>
+                                        {% for rule in rule_summary.unique_rules %}
+                                        <div class="rule-item p-2 bg-light rounded mb-2">
+                                            <p class="mb-1">
+                                                <strong>If:</strong> {{ rule.antecedents|join:", " }}<br>
+                                                <strong>Then:</strong> {{ rule.consequents|join:", " }}
+                                            </p>
+                                        </div>
+                                        {% endfor %}
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -637,6 +691,99 @@
 
 .top-sold-products .carousel-item {
     padding: 1rem;
+}
+
+/* Top Products Styling */
+.top-products {
+    background: #f8f9fa;
+    border-radius: 8px;
+    padding: 1rem;
+}
+
+.top-products h6 {
+    color: #2c3e50;
+    font-weight: 600;
+}
+
+.top-products-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.top-product-item {
+    display: flex;
+    align-items: center;
+    background: white;
+    padding: 0.75rem;
+    border-radius: 6px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.top-product-item:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+}
+
+.rank-badge {
+    width: 24px;
+    height: 24px;
+    background: #e9ecef;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 600;
+    font-size: 0.9rem;
+    color: #495057;
+    margin-right: 0.75rem;
+}
+
+.top-product-item:nth-child(1) .rank-badge {
+    background: #ffd700;
+    color: #856404;
+}
+
+.top-product-item:nth-child(2) .rank-badge {
+    background: #c0c0c0;
+    color: #495057;
+}
+
+.top-product-item:nth-child(3) .rank-badge {
+    background: #cd7f32;
+    color: #fff;
+}
+
+.product-info {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.product-name {
+    color: #2c3e50;
+    text-decoration: none;
+    font-weight: 500;
+    font-size: 0.95rem;
+}
+
+.product-name:hover {
+    color: #0d6efd;
+}
+
+.purchase-count {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: #6c757d;
+    font-size: 0.85rem;
+}
+
+.purchase-count i {
+    color: #0d6efd;
+    font-size: 0.8rem;
 }
 </style>
 {% endblock %}

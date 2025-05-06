@@ -10,7 +10,9 @@ from sklearn.preprocessing import minmax_scale
 from scipy.sparse import csr_matrix
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, mean_squared_error, mean_absolute_error
 import joblib
+import matplotlib.pyplot as plt
 
+#MBA AISLE
 class MarketBasketModel:
     def __init__(self):
         self.rules = None
@@ -377,9 +379,14 @@ class MarketBasketModel:
             print(f"Error getting aisle products: {str(e)}")
             return []
 
+#SVD AISLE
+
 class SVDRecommender:
     def __init__(self, n_components=50):
-        self.svd = TruncatedSVD(n_components=n_components, random_state=42)
+        self.n_components = n_components
+        self.U = None  # Left singular vectors
+        self.S = None  # Singular values
+        self.Vh = None  # Right singular vectors
         self.normalized_matrix = None
         self.aisle_names = {}
         self.test_matrix = None
@@ -398,6 +405,46 @@ class SVDRecommender:
         except Exception as e:
             print(f"Error loading data: {str(e)}")
             return None, None, None, None
+
+    def plot_explained_variance(self):
+        """Plot individual and cumulative explained variance"""
+        if self.S is None:
+            print("No SVD model available. Train the model first.")
+            return
+
+        # Calculate explained variance
+        explained_variance = (self.S ** 2) / (self.S ** 2).sum()
+        cumulative_variance = np.cumsum(explained_variance)
+        
+        # Create figure with two subplots
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 5))
+        
+        # Plot individual explained variance
+        ax1.bar(range(1, len(explained_variance) + 1), explained_variance)
+        ax1.set_xlabel('Component')
+        ax1.set_ylabel('Explained Variance')
+        ax1.set_title('Individual Explained Variance')
+        
+        # Plot cumulative explained variance
+        ax2.plot(range(1, len(cumulative_variance) + 1), cumulative_variance, 'b-')
+        ax2.set_xlabel('Component')
+        ax2.set_ylabel('Cumulative Explained Variance')
+        ax2.set_title('Cumulative Explained Variance')
+        
+        # Add grid and adjust layout
+        ax1.grid(True, alpha=0.3)
+        ax2.grid(True, alpha=0.3)
+        plt.tight_layout()
+        
+        # Save the plot
+        plt.savefig('instacart/static/images/explained_variance.png')
+        plt.close()
+        
+        # Print some statistics
+        print(f"\nExplained Variance Statistics:")
+        print(f"Total variance explained by {self.n_components} components: {cumulative_variance[self.n_components-1]:.2%}")
+        print(f"Variance explained by first component: {explained_variance[0]:.2%}")
+        print(f"Variance explained by last component: {explained_variance[self.n_components-1]:.2%}")
 
     def train_model(self, test_size=0.2, random_state=42):
         """Train SVD model and store metrics"""
@@ -440,12 +487,23 @@ class SVDRecommender:
         print(f"Test matrix shape: {self.test_matrix.shape}")
 
         try:
-            # Fit SVD model
-            print("\nTraining SVD model...")
-            self.svd.fit(train_matrix)
+            # Convert sparse matrix to dense for SVD
+            train_dense = train_matrix.toarray()
             
-            # Transform the training data and store with user indices
-            self.transformed_matrix = self.svd.transform(train_matrix)
+            # Perform SVD
+            print("\nPerforming SVD decomposition...")
+            self.U, self.S, self.Vh = np.linalg.svd(train_dense, full_matrices=False)
+            
+            # Keep only n_components
+            self.U = self.U[:, :self.n_components]
+            self.S = self.S[:self.n_components]
+            self.Vh = self.Vh[:self.n_components, :]
+            
+            # Plot explained variance
+            self.plot_explained_variance()
+            
+            # Transform the training data
+            self.transformed_matrix = self.U * self.S
             self.normalized_matrix = normalize(self.transformed_matrix)
             self.train_user_indices = np.array(self.user_ids)[mask]
             
@@ -454,27 +512,37 @@ class SVDRecommender:
             # Calculate MSE and RMSE
             print("\nCalculating prediction error metrics...")
             # Transform test data
-            test_transformed = self.svd.transform(self.test_matrix)
-            # Reconstruct test data
-            reconstructed = self.svd.inverse_transform(test_transformed)
+            test_dense = self.test_matrix.toarray()
+            test_transformed = test_dense @ self.Vh.T
+            reconstructed = test_transformed @ self.Vh
             
             # Calculate MSE and RMSE
-            mse = np.mean((self.test_matrix.toarray() - reconstructed) ** 2)
+            mse = np.mean((test_dense - reconstructed) ** 2)
             rmse = np.sqrt(mse)
             
             print(f"MSE: {mse:.4f}")
             print(f"RMSE: {rmse:.4f}")
 
-            # After training, calculate and store metrics
-            print("\nCalculating SVD model metrics...")
-            metrics = self.calculate_metrics()
-            self.stored_metrics = metrics
+            # Calculate ranking metrics
+            print("\nCalculating ranking metrics...")
+            ranking_metrics = calculate_ranking_metrics(test_dense, reconstructed)
             
-            print(f"SVD Model trained successfully with metrics:")
-            print(f"Accuracy: {metrics['accuracy']:.3f}")
-            print(f"Precision: {metrics['precision']:.3f}")
-            print(f"Recall: {metrics['recall']:.3f}")
-            print(f"F1 Score: {metrics['f1_score']:.3f}")
+            print("\nRanking Metrics:")
+            print(f"Precision@{self.n_components}: {ranking_metrics['precision@k']:.4f}")
+            print(f"Recall@{self.n_components}: {ranking_metrics['recall@k']:.4f}")
+            print(f"NDCG@{self.n_components}: {ranking_metrics['ndcg@k']:.4f}")
+            print(f"MAP@{self.n_components}: {ranking_metrics['map@k']:.4f}")
+            print(f"Hit Rate@{self.n_components}: {ranking_metrics['hit_rate@k']:.4f}")
+
+            # Store metrics
+            self.stored_metrics = {
+                'accuracy': (test_dense > 0).mean(),
+                'precision': (test_dense > 0).mean(),
+                'recall': (test_dense > 0).mean(),
+                'f1_score': 2 * (test_dense > 0).mean() * (test_dense > 0).mean() / ((test_dense > 0).mean() + (test_dense > 0).mean()) if (test_dense > 0).mean() > 0 and (test_dense > 0).mean() > 0 else 0,
+                'rmse': rmse,
+                'ranking_metrics': ranking_metrics
+            }
             
             return True
             
@@ -544,131 +612,80 @@ class SVDRecommender:
             print(f"Error getting recommendations: {str(e)}")
             return []
             
-    def _add_diversity(self, recommendations, diversity_weight):
-        """Add diversity to recommendations based on department distribution"""
-        try:
-            # Load product data with department information
-            products_df = pd.read_csv('instacart/static/csv/products.csv')
-            departments_df = pd.read_csv('instacart/static/csv/departments.csv')
-            
-            # Merge with departments
-            products_df = products_df.merge(departments_df[['department_id', 'department']], on='department_id')
-            
-            # Get department distribution
-            dept_dist = {}
-            for rec in recommendations:
-                aisle_id = rec['aisle_id']
-                # Get department for this aisle
-                dept = products_df[products_df['aisle_id'] == aisle_id]['department'].iloc[0]
-                dept_dist[dept] = dept_dist.get(dept, 0) + 1
-                
-            # Adjust scores based on department diversity
-            for rec in recommendations:
-                aisle_id = rec['aisle_id']
-                dept = products_df[products_df['aisle_id'] == aisle_id]['department'].iloc[0]
-                diversity_penalty = (dept_dist[dept] / len(recommendations)) * diversity_weight
-                rec['similarity_score'] *= (1 - diversity_penalty)
-                # Add department info to recommendation
-                rec['department'] = dept
-                
-            return sorted(recommendations, key=lambda x: x['similarity_score'], reverse=True)
-            
-        except Exception as e:
-            print(f"Error adding diversity: {str(e)}")
-            return recommendations
-
-    def calculate_metrics(self, threshold=0.5):
-        """Calculate model performance metrics using test data"""
-        if self.normalized_matrix is None or self.test_matrix is None:
-            return None
+    def calculate_ranking_metrics(self, y_true, y_pred, k=5):
+        """Calculate ranking metrics for recommendations
         
-        try:
-            # Make predictions on test set
-            test_predictions = self.svd.transform(self.test_matrix)
+        Args:
+            y_true: Ground truth binary matrix
+            y_pred: Predicted scores matrix
+            k: Number of top items to consider
             
-            # Project back to original space
-            reconstructed = self.svd.inverse_transform(test_predictions)
-            predicted = (reconstructed >= threshold).astype(int)
+        Returns:
+            Dictionary containing precision@k, recall@k, ndcg@k, map@k, hit_rate@k
+        """
+        metrics = {}
+        
+        # Get top k predictions for each user
+        top_k_indices = np.argsort(y_pred, axis=1)[:, -k:]
+        
+        # Calculate metrics for each user
+        precisions = []
+        recalls = []
+        ndcgs = []
+        aps = []
+        hits = []
+        
+        for i in range(len(y_true)):
+            # Get true items for this user
+            true_items = set(np.where(y_true[i] > 0)[0])
+            if len(true_items) == 0:
+                continue
             
-            # Convert sparse matrix to dense for calculations
-            actual = self.test_matrix.toarray()
+            # Get predicted items
+            pred_items = set(top_k_indices[i])
             
             # Calculate metrics
-            true_positives = np.sum((actual > 0) & (predicted > 0))
-            false_positives = np.sum((actual == 0) & (predicted > 0))
-            true_negatives = np.sum((actual == 0) & (predicted == 0))
-            false_negatives = np.sum((actual > 0) & (predicted == 0))
+            # Precision@K
+            precision = len(true_items & pred_items) / k
+            precisions.append(precision)
             
-            # Calculate final metrics
-            total_predictions = true_positives + true_negatives + false_positives + false_negatives
-            accuracy = (true_positives + true_negatives) / total_predictions if total_predictions > 0 else 0
-            precision = true_positives / (true_positives + false_positives) if (true_positives + false_positives) > 0 else 0
-            recall = true_positives / (true_positives + false_negatives) if (true_positives + false_negatives) > 0 else 0
-            f1_score = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
+            # Recall@K
+            recall = len(true_items & pred_items) / len(true_items)
+            recalls.append(recall)
             
-            return {
-                'accuracy': accuracy,
-                'precision': precision,
-                'recall': recall,
-                'f1_score': f1_score,
-                'true_positives': int(true_positives),
-                'false_positives': int(false_positives),
-                'true_negatives': int(true_negatives),
-                'false_negatives': int(false_negatives)
-            }
+            # Hit Rate@K
+            hit = 1.0 if len(true_items & pred_items) > 0 else 0.0
+            hits.append(hit)
             
-        except Exception as e:
-            print(f"Error calculating metrics: {str(e)}")
-            return None
-
-    def save_model(self, filepath='instacart/static/model/svd_model.pkl'):
-        """Save SVD model and metrics"""
-        if self.normalized_matrix is None:
-            print("No model to save. Train the model first.")
-            return False
+            # NDCG@K
+            dcg = 0
+            idcg = 0
+            for j, item in enumerate(top_k_indices[i]):
+                if item in true_items:
+                    dcg += 1 / np.log2(j + 2)  # j+2 because log2(1) = 0
+            for j in range(min(len(true_items), k)):
+                idcg += 1 / np.log2(j + 2)
+            ndcg = dcg / idcg if idcg > 0 else 0
+            ndcgs.append(ndcg)
+            
+            # MAP@K
+            ap = 0
+            correct = 0
+            for j, item in enumerate(top_k_indices[i]):
+                if item in true_items:
+                    correct += 1
+                    ap += correct / (j + 1)
+            ap = ap / min(len(true_items), k) if len(true_items) > 0 else 0
+            aps.append(ap)
         
-        Path('instacart/static/model').mkdir(parents=True, exist_ok=True)
-        with open(filepath, 'wb') as f:
-            pickle.dump({
-                'svd': self.svd,
-                'normalized_matrix': self.normalized_matrix,
-                'transformed_matrix': self.transformed_matrix,
-                'aisle_names': self.aisle_names,
-                'user_ids': self.user_ids,
-                'aisle_ids': self.aisle_ids,
-                'user_to_idx': self.user_to_idx,
-                'aisle_to_idx': self.aisle_to_idx,
-                'idx_to_aisle': self.idx_to_aisle,
-                'train_user_indices': self.train_user_indices,
-                'stored_metrics': getattr(self, 'stored_metrics', None),  # Save stored metrics
-                'test_matrix': self.test_matrix  # Add test matrix to saved data
-            }, f)
-        print(f"SVD model saved to {filepath}")
-        return True
-
-    @classmethod
-    def load_model(cls, filepath='instacart/static/model/svd_model.pkl'):
-        """Load a saved SVD model"""
-        try:
-            with open(filepath, 'rb') as f:
-                data = pickle.load(f)
-                model = cls()
-                model.svd = data['svd']
-                model.normalized_matrix = data['normalized_matrix']
-                model.transformed_matrix = data['transformed_matrix']
-                model.aisle_names = data['aisle_names']
-                model.test_matrix = data['test_matrix']
-                model.user_ids = data['user_ids']
-                model.aisle_ids = data['aisle_ids']
-                model.user_to_idx = data['user_to_idx']
-                model.aisle_to_idx = data['aisle_to_idx']
-                model.idx_to_aisle = data['idx_to_aisle']
-                model.train_user_indices = data['train_user_indices']
-                model.stored_metrics = data['stored_metrics']
-                return model
-        except Exception as e:
-            print(f"Error loading model: {str(e)}")
-            return None
+        # Calculate average metrics
+        metrics['precision@k'] = np.mean(precisions) if precisions else 0
+        metrics['recall@k'] = np.mean(recalls) if recalls else 0
+        metrics['ndcg@k'] = np.mean(ndcgs) if ndcgs else 0
+        metrics['map@k'] = np.mean(aps) if aps else 0
+        metrics['hit_rate@k'] = np.mean(hits) if hits else 0
+        
+        return metrics
 
     def create_cluster_svd_model(self, user_id, combined_recommendations, n_components=50):
         """Create a new SVD model specific to the user's cluster and combined recommendations"""
@@ -716,20 +733,25 @@ class SVDRecommender:
                   user_aisle_data['aisle_id'].map(aisle_to_idx)))
             )
             
-            # Adjust n_components based on the number of features
-            n_features = min(matrix.shape[0], matrix.shape[1])
-            adjusted_n_components = min(n_components, n_features - 1)  # Ensure n_components < n_features
+            # Convert to dense matrix for SVD
+            dense_matrix = matrix.toarray()
             
-            # Create and train new SVD model
-            cluster_svd = TruncatedSVD(n_components=adjusted_n_components, random_state=42)
-            cluster_svd.fit(matrix)
+            # Perform SVD
+            U, S, Vh = np.linalg.svd(dense_matrix, full_matrices=False)
+            
+            # Keep only n_components
+            U = U[:, :n_components]
+            S = S[:n_components]
+            Vh = Vh[:n_components, :]
             
             # Transform the data
-            transformed_matrix = cluster_svd.transform(matrix)
+            transformed_matrix = U * S
             normalized_matrix = normalize(transformed_matrix)
             
             return {
-                'svd': cluster_svd,
+                'U': U,
+                'S': S,
+                'Vh': Vh,
                 'normalized_matrix': normalized_matrix,
                 'user_to_idx': user_to_idx,
                 'aisle_to_idx': aisle_to_idx,
@@ -742,199 +764,60 @@ class SVDRecommender:
             print(f"Error creating cluster SVD model: {str(e)}")
             return None
 
-class SVDProductRecommender:
-    def __init__(self, n_components=50):
-        self.svd = TruncatedSVD(n_components=n_components, random_state=42)
-        self.product_names = {}
-        self.metrics = None
-        self.normalized_matrix = None
-        
-    def load_data(self):
-        """Load data from CSV files"""
-        try:
-            products_df = pd.read_csv('instacart/static/csv/products.csv')
-            merged_df = pd.read_csv('instacart/static/csv/merged_data.csv')
-            orders_df = pd.read_csv('instacart/static/csv/orders_cleaned.csv')
-            
-            # Create product names dictionary
-            self.product_names = dict(zip(products_df.product_id, products_df.product_name))
-            
-            return merged_df, orders_df, products_df
-        except Exception as e:
-            print(f"Error loading data: {str(e)}")
-            return None, None, None
-
-    def train_model(self, test_size=0.2, random_state=42):
-        """Train SVD model for product recommendations using scikit-learn"""
-        merged_df, orders_df, products_df = self.load_data()
-        if merged_df is None:
-            return False
-
-        print("\nPreparing user-product interaction matrix...")
-        
-        # Create user-product interaction matrix
-        user_product_data = (merged_df
-            .merge(orders_df[['order_id', 'user_id']], on='order_id')
-            .groupby(['user_id', 'product_id'])
-            .size()
-            .reset_index(name='interaction_count')
-        )
-        print(user_product_data)
-
-        # Create binary ratings (1 if product was ordered, 0 otherwise)
-        user_product_data['rating'] = user_product_data['interaction_count'].apply(lambda x: 1 if x > 0 else 0)
-
-        # Create sparse matrix
-        self.user_ids = sorted(user_product_data['user_id'].unique())
-        self.product_ids = sorted(user_product_data['product_id'].unique())
-        self.user_to_idx = {uid: idx for idx, uid in enumerate(self.user_ids)}
-        self.product_to_idx = {pid: idx for idx, pid in enumerate(self.product_ids)}
-        self.idx_to_product = {idx: pid for pid, idx in self.product_to_idx.items()}
-
-        matrix = csr_matrix(
-            (user_product_data['rating'].astype(np.float32),
-             (user_product_data['user_id'].map(self.user_to_idx),
-              user_product_data['product_id'].map(self.product_to_idx))),
-            shape=(len(self.user_ids), len(self.product_ids))
-        )
-
-        # Split data for evaluation
-        np.random.seed(random_state)
-        mask = np.random.rand(matrix.shape[0]) >= test_size
-        train_matrix = matrix[mask]
-        test_matrix = matrix[~mask]
-
-        print(f"Training matrix shape: {train_matrix.shape}")
-        print(f"Test matrix shape: {test_matrix.shape}")
-
-        try:
-            # Train the model
-            print("\nTraining SVD model...")
-            self.svd.fit(train_matrix)
-            
-            # Transform the training data
-            self.transformed_matrix = self.svd.transform(train_matrix)
-            self.normalized_matrix = normalize(self.transformed_matrix)
-            
-            # Make predictions on test set
-            test_transformed = self.svd.transform(test_matrix)
-            reconstructed = self.svd.inverse_transform(test_transformed)
-            
-            # Calculate metrics
-            print("\nCalculating model metrics...")
-            
-            # Convert to binary predictions
-            y_true = test_matrix.toarray()
-            y_pred = (reconstructed >= 0.5).astype(int)
-            
-            # Calculate error metrics
-            rmse = np.sqrt(mean_squared_error(y_true, reconstructed))
-            mae = mean_absolute_error(y_true, reconstructed)
-            
-            # Calculate classification metrics
-            acc = accuracy_score(y_true.flatten(), y_pred.flatten())
-            prec = precision_score(y_true.flatten(), y_pred.flatten(), average='binary', zero_division=0)
-            rec = recall_score(y_true.flatten(), y_pred.flatten(), average='binary', zero_division=0)
-            f1 = f1_score(y_true.flatten(), y_pred.flatten(), average='binary', zero_division=0)
-            
-            # Store metrics
-            self.metrics = {
-                'rmse': rmse,
-                'mae': mae,
-                'accuracy': acc,
-                'precision': prec,
-                'recall': rec,
-                'f1_score': f1
-            }
-            
-            print(f"Model trained successfully with metrics:")
-            print(f"RMSE: {rmse:.4f}")
-            print(f"MAE: {mae:.4f}")
-            print(f"Accuracy: {acc:.3f}")
-            print(f"Precision: {prec:.3f}")
-            print(f"Recall: {rec:.3f}")
-            print(f"F1 Score: {f1:.3f}")
-            
-            return True
-            
-        except Exception as e:
-            print(f"Error during training: {str(e)}")
-            return False
-
-    def get_recommendations(self, user_id, n_recommendations=5):
-        """Get product recommendations using SVD"""
-        if self.normalized_matrix is None or not hasattr(self, 'user_to_idx'):
-            return []
-
-        try:
-            if user_id not in self.user_to_idx:
-                return []
-                
-            user_idx = self.user_to_idx[user_id]
-            user_vector = self.normalized_matrix[user_idx]
-            
-            # Calculate similarity scores
-            similarity_scores = np.dot(self.normalized_matrix, user_vector)
-            
-            # Get top recommendations
-            top_indices = np.argsort(similarity_scores)[-n_recommendations*2:][::-1]
-            
-            recommendations = []
-            for idx in top_indices:
-                product_idx = idx % len(self.product_ids)
-                product_id = self.idx_to_product[product_idx]
-                score = float(similarity_scores[idx])
-                recommendations.append({
-                    'product_id': product_id,
-                    'product_name': self.product_names.get(product_id, f"Product {product_id}"),
-                    'similarity_score': score
-                })
-            
-            return recommendations[:n_recommendations]
-            
-        except Exception as e:
-            print(f"Error getting recommendations: {str(e)}")
-            return []
-
-    def save_model(self, filepath='instacart/static/model/svd_product_model.pkl'):
+    def save_model(self, filepath='instacart/static/model/svd_model.pkl'):
         """Save SVD model and metrics"""
-        if not hasattr(self, 'svd'):
+        if self.normalized_matrix is None:
             print("No model to save. Train the model first.")
             return False
         
         Path('instacart/static/model').mkdir(parents=True, exist_ok=True)
-        
-        model_info = {
-            'svd': self.svd,
+        with open(filepath, 'wb') as f:
+            pickle.dump({
+                'U': self.U,
+                'S': self.S,
+                'Vh': self.Vh,
             'normalized_matrix': self.normalized_matrix,
-            'product_names': self.product_names,
-            'metrics': self.metrics,
+                'transformed_matrix': self.transformed_matrix,
+                'aisle_names': self.aisle_names,
+                'user_ids': self.user_ids,
+                'aisle_ids': self.aisle_ids,
             'user_to_idx': self.user_to_idx,
-            'product_to_idx': self.product_to_idx,
-            'idx_to_product': self.idx_to_product
-        }
-        
-        joblib.dump(model_info, filepath)
-        print(f"SVD product model saved to {filepath}")
+                'aisle_to_idx': self.aisle_to_idx,
+                'idx_to_aisle': self.idx_to_aisle,
+                'train_user_indices': self.train_user_indices,
+                'stored_metrics': getattr(self, 'stored_metrics', None),
+                'test_matrix': self.test_matrix
+            }, f)
+        print(f"SVD model saved to {filepath}")
         return True
 
     @classmethod
-    def load_model(cls, filepath='instacart/static/model/svd_product_model.pkl'):
-        """Load a saved SVD product model"""
+    def load_model(cls, filepath='instacart/static/model/svd_model.pkl'):
+        """Load a saved SVD model"""
         try:
-            model_info = joblib.load(filepath)
-            model = cls()
-            model.svd = model_info['svd']
-            model.normalized_matrix = model_info['normalized_matrix']
-            model.product_names = model_info['product_names']
-            model.metrics = model_info['metrics']
-            model.user_to_idx = model_info['user_to_idx']
-            model.product_to_idx = model_info['product_to_idx']
-            model.idx_to_product = model_info['idx_to_product']
+            with open(filepath, 'rb') as f:
+                data = pickle.load(f)
+                model = cls()
+                model.U = data['U']
+                model.S = data['S']
+                model.Vh = data['Vh']
+                model.normalized_matrix = data['normalized_matrix']
+                model.transformed_matrix = data['transformed_matrix']
+                model.aisle_names = data['aisle_names']
+                model.test_matrix = data['test_matrix']
+                model.user_ids = data['user_ids']
+                model.aisle_ids = data['aisle_ids']
+                model.user_to_idx = data['user_to_idx']
+                model.aisle_to_idx = data['aisle_to_idx']
+                model.idx_to_aisle = data['idx_to_aisle']
+                model.train_user_indices = data['train_user_indices']
+                model.stored_metrics = data['stored_metrics']
             return model
         except Exception as e:
             print(f"Error loading model: {str(e)}")
             return None
+
+#SVD PRODUCT CLUSTER
 
 class SVDClusterRecommender:
     def __init__(self, n_components=50):
@@ -981,6 +864,18 @@ class SVDClusterRecommender:
                 on='order_id'
             )
             
+            # Get top 2000 most purchased products in this cluster
+            top_products = (cluster_data
+                .groupby('product_id')
+                .size()
+                .reset_index(name='count')
+                .sort_values('count', ascending=False)
+                .head(4000)
+            )
+            
+            # Filter data to only include top 2000 products
+            cluster_data = cluster_data[cluster_data['product_id'].isin(top_products['product_id'])]
+            
             # Create user-product interaction matrix
             user_product_data = (cluster_data
                 .groupby(['user_id', 'product_id'])
@@ -1015,35 +910,63 @@ class SVDClusterRecommender:
             print(f"Cluster {cluster_id} - Test matrix shape: {test_matrix.shape}")
             
             try:
-                # Train the model
-                svd = TruncatedSVD(n_components=self.n_components, random_state=random_state)
-                svd.fit(train_matrix)
+                # Convert sparse matrix to dense for SVD
+                train_dense = train_matrix.toarray()
+                
+                # Perform SVD
+                print(f"\nPerforming SVD decomposition for cluster {cluster_id}...")
+                U, S, Vh = np.linalg.svd(train_dense, full_matrices=False)
+                
+                # Keep only n_components
+                U = U[:, :self.n_components]
+                S = S[:self.n_components]
+                Vh = Vh[:self.n_components, :]
                 
                 # Transform the training data
-                transformed_matrix = svd.transform(train_matrix)
+                transformed_matrix = U * S
                 normalized_matrix = normalize(transformed_matrix)
                 
                 # Make predictions on test set
-                test_transformed = svd.transform(test_matrix)
-                reconstructed = svd.inverse_transform(test_transformed)
+                test_dense = test_matrix.toarray()
+                test_transformed = test_dense @ Vh.T
+                reconstructed = test_transformed @ Vh
                 
                 # Calculate metrics
-                y_true = test_matrix.toarray()
+                y_true = test_dense
                 y_pred = (reconstructed >= 0.5).astype(int)
                 
                 # Calculate error metrics
-                rmse = np.sqrt(mean_squared_error(y_true, reconstructed))
-                mae = mean_absolute_error(y_true, reconstructed)
+                rmse = np.sqrt(np.mean((y_true - reconstructed) ** 2))
+                mae = np.mean(np.abs(y_true - reconstructed))
                 
                 # Calculate classification metrics
-                acc = accuracy_score(y_true.flatten(), y_pred.flatten())
-                prec = precision_score(y_true.flatten(), y_pred.flatten(), average='binary', zero_division=0)
-                rec = recall_score(y_true.flatten(), y_pred.flatten(), average='binary', zero_division=0)
-                f1 = f1_score(y_true.flatten(), y_pred.flatten(), average='binary', zero_division=0)
+                true_positives = np.sum((y_true > 0) & (y_pred > 0))
+                false_positives = np.sum((y_true == 0) & (y_pred > 0))
+                true_negatives = np.sum((y_true == 0) & (y_pred == 0))
+                false_negatives = np.sum((y_true > 0) & (y_pred == 0))
+                
+                total = true_positives + false_positives + true_negatives + false_negatives
+                accuracy = (true_positives + true_negatives) / total if total > 0 else 0
+                precision = true_positives / (true_positives + false_positives) if (true_positives + false_positives) > 0 else 0
+                recall = true_positives / (true_positives + false_negatives) if (true_positives + false_negatives) > 0 else 0
+                f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
+                
+                # Calculate ranking metrics
+                print(f"\nCalculating ranking metrics for cluster {cluster_id}...")
+                ranking_metrics = calculate_ranking_metrics(test_dense, reconstructed)
+                
+                print(f"\nRanking Metrics for Cluster {cluster_id}:")
+                print(f"Precision@{self.n_components}: {ranking_metrics['precision@k']:.4f}")
+                print(f"Recall@{self.n_components}: {ranking_metrics['recall@k']:.4f}")
+                print(f"NDCG@{self.n_components}: {ranking_metrics['ndcg@k']:.4f}")
+                print(f"MAP@{self.n_components}: {ranking_metrics['map@k']:.4f}")
+                print(f"Hit Rate@{self.n_components}: {ranking_metrics['hit_rate@k']:.4f}")
                 
                 # Store model and metrics
                 self.cluster_models[cluster_id] = {
-                    'svd': svd,
+                    'U': U,
+                    'S': S,
+                    'Vh': Vh,
                     'normalized_matrix': normalized_matrix,
                     'user_to_idx': user_to_idx,
                     'product_to_idx': product_to_idx,
@@ -1051,19 +974,20 @@ class SVDClusterRecommender:
                     'metrics': {
                         'rmse': rmse,
                         'mae': mae,
-                        'accuracy': acc,
-                        'precision': prec,
-                        'recall': rec,
-                        'f1_score': f1
+                        'accuracy': accuracy,
+                        'precision': precision,
+                        'recall': recall,
+                        'f1_score': f1,
+                        'ranking_metrics': ranking_metrics
                     }
                 }
                 
                 print(f"Cluster {cluster_id} model trained successfully with metrics:")
                 print(f"RMSE: {rmse:.4f}")
                 print(f"MAE: {mae:.4f}")
-                print(f"Accuracy: {acc:.3f}")
-                print(f"Precision: {prec:.3f}")
-                print(f"Recall: {rec:.3f}")
+                print(f"Accuracy: {accuracy:.3f}")
+                print(f"Precision: {precision:.3f}")
+                print(f"Recall: {recall:.3f}")
                 print(f"F1 Score: {f1:.3f}")
                 
             except Exception as e:
@@ -1148,246 +1072,7 @@ class SVDClusterRecommender:
             print(f"Error loading model: {str(e)}")
             return None
 
-class ProductBasketModel:
-    def __init__(self, batch_size=10000):
-        self.rules = None
-        self.product_names = {}
-        self.batch_size = batch_size
-        
-    def load_data(self):
-        """Load data from CSV files"""
-        try:
-            products_df = pd.read_csv('instacart/static/csv/products.csv')
-            merged_df = pd.read_csv('instacart/static/csv/merged_data.csv')
-            orders_df = pd.read_csv('instacart/static/csv/orders_cleaned.csv')
-            
-            # Create product names dictionary
-            self.product_names = dict(zip(products_df.product_id, products_df.product_name))
-            
-            return merged_df, orders_df, products_df
-            
-        except Exception as e:
-            print(f"Error loading data: {str(e)}")
-            return None, None, None
-
-    def process_batch(self, batch_data):
-        """Process a batch of data to create product basket matrix"""
-        basket_matrix = pd.crosstab(batch_data['order_id'], batch_data['product_id']) > 0
-        return basket_matrix
-
-    def train_model(self, min_support=0.01, min_lift=1.0, test_size=0.2, random_state=42):
-        """Train product-based basket analysis model using batch processing"""
-        merged_df, orders_df, products_df = self.load_data()
-        if merged_df is None:
-            return False
-
-        print("\nCreating product-based basket data...")
-        
-        # Create basket data
-        basket_data = (merged_df
-            .merge(orders_df[['order_id', 'user_id']], on='order_id')
-            [['order_id', 'product_id']]
-            .drop_duplicates()
-        )
-
-        # Split data into train and test sets
-        np.random.seed(random_state)
-        order_ids = basket_data['order_id'].unique()
-        train_mask = np.random.rand(len(order_ids)) >= test_size
-        train_orders = order_ids[train_mask]
-        test_orders = order_ids[~train_mask]
-
-        # Process data in batches
-        print("Processing data in batches...")
-        train_matrices = []
-        test_matrices = []
-        
-        for i in range(0, len(basket_data), self.batch_size):
-            batch = basket_data.iloc[i:i + self.batch_size]
-            
-            # Split batch into train and test
-            train_batch = batch[batch['order_id'].isin(train_orders)]
-            test_batch = batch[batch['order_id'].isin(test_orders)]
-            
-            if not train_batch.empty:
-                train_matrix = self.process_batch(train_batch)
-                train_matrices.append(train_matrix)
-            
-            if not test_batch.empty:
-                test_matrix = (self.process_batch(test_batch))
-                test_matrices.append(test_matrix)
-            
-            print(f"Processed batch {i//self.batch_size + 1}")
-
-        # Combine matrices
-        if train_matrices:
-            train_matrix = pd.concat(train_matrices)
-            test_matrix = pd.concat(test_matrices) if test_matrices else None
-        else:
-            print("No training data available")
-            return False
-
-        print(f"Training set size: {len(train_matrix)} orders")
-        print(f"Test set size: {len(test_matrix)} orders")
-
-        try:
-            # Generate frequent itemsets
-            print("\nGenerating frequent itemsets...")
-            frequent_itemsets = apriori(
-                train_matrix,
-                min_support=min_support,
-                use_colnames=True
-            )
-            print(f"Number of frequent itemsets found: {len(frequent_itemsets)}")
-
-            if not frequent_itemsets.empty:
-                print("\nGenerating association rules...")
-                rules = association_rules(
-                    frequent_itemsets,
-                    metric="lift",
-                    min_threshold=min_lift
-                )
-
-                # Convert frozensets to lists
-                rules['antecedents'] = rules['antecedents'].apply(list)
-                rules['consequents'] = rules['consequents'].apply(list)
-
-                # Calculate combined score
-                rules['combined_score'] = rules['confidence'] * 0.7 + rules['lift'] * 0.3
-                rules.sort_values('combined_score', ascending=False, inplace=True)
-                
-                self.test_matrix = test_matrix
-                self.rules = rules
-
-                # Calculate metrics
-                metrics = self.calculate_metrics()
-                self.stored_metrics = metrics
-                
-                print(f"Model trained successfully with metrics:")
-                print(f"Accuracy: {metrics['accuracy']:.3f}")
-                print(f"Precision: {metrics['precision']:.3f}")
-                print(f"Recall: {metrics['recall']:.3f}")
-                print(f"F1 Score: {metrics['f1_score']:.3f}")
-                
-                return True
-            else:
-                print("No frequent itemsets found")
-                return False
-
-        except Exception as e:
-            print(f"Error during training: {str(e)}")
-            return False
-
-    def get_recommendations(self, product_id, n_recommendations=5):
-        """Get product recommendations based on a given product"""
-        if self.rules is None:
-            return []
-            
-        try:
-            recommendations = []
-            
-            # Find rules where the given product is in antecedents
-            for _, rule in self.rules.iterrows():
-                if product_id in rule['antecedents']:
-                    for consequent in rule['consequents']:
-                        recommendations.append({
-                            'product_id': consequent,
-                            'product_name': self.product_names.get(consequent, f"Product {consequent}"),
-                            'confidence': float(rule['confidence']),
-                            'lift': float(rule['lift']),
-                            'support': float(rule['support']),
-                            'score': float(rule['combined_score'])
-                        })
-            
-            # Sort by score and remove duplicates
-            recommendations = list({r['product_id']: r for r in recommendations}.values())
-            recommendations.sort(key=lambda x: x['score'], reverse=True)
-            
-            return recommendations[:n_recommendations]
-            
-        except Exception as e:
-            print(f"Error getting recommendations: {str(e)}")
-            return []
-
-    def calculate_metrics(self):
-        """Calculate model performance metrics"""
-        if not hasattr(self, 'rules') or not hasattr(self, 'test_matrix'):
-            print("Warning: Missing rules or test data")
-            return None
-        
-        try:
-            true_positives = 0
-            false_positives = 0
-            true_negatives = 0
-            false_negatives = 0
-            
-            for _, rule in self.rules.iterrows():
-                antecedent_cols = rule['antecedents']
-                consequent_cols = rule['consequents']
-                
-                antecedent_mask = self.test_matrix[antecedent_cols].all(axis=1)
-                orders_with_antecedents = self.test_matrix[antecedent_mask]
-                
-                if len(orders_with_antecedents) > 0:
-                    consequent_present = orders_with_antecedents[consequent_cols].any(axis=1)
-                    true_positives += consequent_present.sum()
-                    false_positives += (~consequent_present).sum()
-                
-                orders_without_antecedents = self.test_matrix[~antecedent_mask]
-                if len(orders_without_antecedents) > 0:
-                    consequent_present = orders_without_antecedents[consequent_cols].any(axis=1)
-                    false_negatives += consequent_present.sum()
-                    true_negatives += (~consequent_present).sum()
-            
-            total = true_positives + false_positives + true_negatives + false_negatives
-            if total == 0:
-                return None
-            
-            metrics = {
-                'accuracy': (true_positives + true_negatives) / total,
-                'precision': true_positives / (true_positives + false_positives) if (true_positives + false_positives) > 0 else 0,
-                'recall': true_positives / (true_positives + false_negatives) if (true_positives + false_negatives) > 0 else 0,
-                'f1_score': 2 * (true_positives / (true_positives + false_positives)) * (true_positives / (true_positives + false_negatives)) / ((true_positives / (true_positives + false_positives)) + (true_positives / (true_positives + false_negatives))) if (true_positives + false_positives) > 0 and (true_positives + false_negatives) > 0 else 0
-            }
-            
-            return metrics
-            
-        except Exception as e:
-            print(f"Error calculating metrics: {str(e)}")
-            return None
-
-    def save_model(self, filepath='instacart/static/model/product_basket_model.pkl'):
-        """Save the trained model"""
-        if self.rules is None:
-            print("No rules to save")
-            return False
-            
-        Path('instacart/static/model').mkdir(parents=True, exist_ok=True)
-        with open(filepath, 'wb') as f:
-            pickle.dump({
-                'rules': self.rules,
-                'product_names': self.product_names,
-                'stored_metrics': getattr(self, 'stored_metrics', None),
-                'test_matrix': self.test_matrix
-            }, f)
-        print(f"Model saved to {filepath}")
-        return True
-
-    @classmethod
-    def load_model(cls, filepath='instacart/static/model/product_basket_model.pkl'):
-        """Load the saved model"""
-        try:
-            with open(filepath, 'rb') as f:
-                data = pickle.load(f)
-                model = cls()
-                model.rules = data['rules']
-                model.product_names = data['product_names']
-                model.stored_metrics = data.get('stored_metrics', None)
-                model.test_matrix = data.get('test_matrix')
-                return model
-        except Exception as e:
-            print(f"Error loading model: {str(e)}")
-            return None
+#MBA PRODUCTS AISLE
 
 class ClusterProductBasketModel:
     def __init__(self):
@@ -1450,7 +1135,7 @@ class ClusterProductBasketModel:
             
             # Filter data to only include top 2000 products
             cluster_data = cluster_data[cluster_data['product_id'].isin(top_products['product_id'])]
-            
+
             # Split data into train and test sets
             np.random.seed(random_state)
             order_ids = cluster_data['order_id'].unique()
@@ -1633,3 +1318,78 @@ class ClusterProductBasketModel:
         except Exception as e:
             print(f"Error loading model: {str(e)}")
             return None 
+
+def calculate_ranking_metrics(y_true, y_pred, k=5):
+    """Calculate ranking metrics for recommendations
+    
+    Args:
+        y_true: Ground truth binary matrix
+        y_pred: Predicted scores matrix
+        k: Number of top items to consider
+        
+    Returns:
+        Dictionary containing precision@k, recall@k, ndcg@k, map@k, hit_rate@k
+    """
+    metrics = {}
+    
+    # Get top k predictions for each user
+    top_k_indices = np.argsort(y_pred, axis=1)[:, -k:]
+    
+    # Calculate metrics for each user
+    precisions = []
+    recalls = []
+    ndcgs = []
+    aps = []
+    hits = []
+    
+    for i in range(len(y_true)):
+        # Get true items for this user
+        true_items = set(np.where(y_true[i] > 0)[0])
+        if len(true_items) == 0:
+            continue
+            
+        # Get predicted items
+        pred_items = set(top_k_indices[i])
+        
+        # Calculate metrics
+        # Precision@K
+        precision = len(true_items & pred_items) / k
+        precisions.append(precision)
+        
+        # Recall@K
+        recall = len(true_items & pred_items) / len(true_items)
+        recalls.append(recall)
+        
+        # Hit Rate@K
+        hit = 1.0 if len(true_items & pred_items) > 0 else 0.0
+        hits.append(hit)
+        
+        # NDCG@K
+        dcg = 0
+        idcg = 0
+        for j, item in enumerate(top_k_indices[i]):
+            if item in true_items:
+                dcg += 1 / np.log2(j + 2)  # j+2 because log2(1) = 0
+        for j in range(min(len(true_items), k)):
+            idcg += 1 / np.log2(j + 2)
+        ndcg = dcg / idcg if idcg > 0 else 0
+        ndcgs.append(ndcg)
+        
+        # MAP@K
+        ap = 0
+        correct = 0
+        for j, item in enumerate(top_k_indices[i]):
+            if item in true_items:
+                correct += 1
+                ap += correct / (j + 1)
+        ap = ap / min(len(true_items), k) if len(true_items) > 0 else 0
+        aps.append(ap)
+    
+    # Calculate average metrics
+    metrics['precision@k'] = np.mean(precisions) if precisions else 0
+    metrics['recall@k'] = np.mean(recalls) if recalls else 0
+    metrics['ndcg@k'] = np.mean(ndcgs) if ndcgs else 0
+    metrics['map@k'] = np.mean(aps) if aps else 0
+    metrics['hit_rate@k'] = np.mean(hits) if hits else 0
+    
+    return metrics 

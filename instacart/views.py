@@ -6,7 +6,7 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 from .models import Order, OrderProduct, Product, Aisle, UserSession, Cart
 import pandas as pd
-from .ml_utils import MarketBasketModel, SVDRecommender, SVDClusterRecommender, ProductBasketModel, ClusterProductBasketModel
+from .ml_utils import MarketBasketModel, SVDRecommender, SVDClusterRecommender, ClusterProductBasketModel
 
 # Create your views here.
 
@@ -195,10 +195,30 @@ def home(request):
         # Get MBA recommendations if available
         if mba_model is not None:
             # Get recommendations with cluster weights
-            mba_recommendations = mba_model.get_recommendations(user_id=user_id, user_aisles=user_aisles, n_recommendations=10)
+            mba_recommendations = mba_model.get_recommendations(user_id=user_id, user_aisles=user_aisles, n_recommendations=5)
             
             # Sort by the cluster-weighted score
             mba_recommendations.sort(key=lambda x: x['score'], reverse=True)
+            
+            # Get user's cluster
+            user_clusters = pd.read_csv('instacart/static/csv/user_clusters.csv')
+            user_cluster = user_clusters[user_clusters['user_id'] == user_id]['Cluster'].iloc[0]
+            cluster_users = user_clusters[user_clusters['Cluster'] == user_cluster]['user_id'].tolist()
+            
+            # Add top 3 products for each aisle
+            for rec in mba_recommendations:
+                aisle_id = rec['aisle_id']
+                # Get top 3 products in this aisle for the user's cluster
+                top_products = (merged_df
+                    .merge(orders_df[orders_df['user_id'].isin(cluster_users)][['order_id']], on='order_id')
+                    .merge(products_df[products_df['aisle_id'] == aisle_id][['product_id', 'product_name']], on='product_id')
+                    .groupby(['product_id', 'product_name'])
+                    .size()
+                    .reset_index(name='cluster_count')
+                    .sort_values('cluster_count', ascending=False)
+                    .head(3)
+                )
+                rec['top_products'] = top_products.to_dict('records')
             
             context.update({
                 'mba_recommendations': mba_recommendations,
@@ -209,6 +229,22 @@ def home(request):
         # Get SVD recommendations if available
         if svd_model is not None:
             svd_recommendations = svd_model.get_recommendations(user_id)
+            
+            # Add top 3 products for each aisle
+            for rec in svd_recommendations:
+                aisle_id = rec['aisle_id']
+                # Get top 3 products in this aisle for the user's cluster
+                top_products = (merged_df
+                    .merge(orders_df[orders_df['user_id'].isin(cluster_users)][['order_id']], on='order_id')
+                    .merge(products_df[products_df['aisle_id'] == aisle_id][['product_id', 'product_name']], on='product_id')
+                    .groupby(['product_id', 'product_name'])
+                    .size()
+                    .reset_index(name='cluster_count')
+                    .sort_values('cluster_count', ascending=False)
+                    .head(3)
+                )
+                rec['top_products'] = top_products.to_dict('records')
+            
             context.update({
                 'svd_recommendations': svd_recommendations,
                 'svd_metrics': svd_model.stored_metrics
@@ -273,7 +309,7 @@ def home(request):
         # Get cluster-specific product recommendations
         cluster_product_recommendations = []
         if cluster_svd_model is not None:
-            cluster_product_recommendations = cluster_svd_model.get_recommendations(user_id, n_recommendations=10)
+            cluster_product_recommendations = cluster_svd_model.get_recommendations(user_id, n_recommendations=9)
         
         # Get top 10 most sold products for the user's cluster
         top_sold_products = []
@@ -329,7 +365,7 @@ def search(request):
         
     try:
         # Load product data
-        products_df, _, _ = load_data()
+        products_df, merged_df, orders_df = load_data()
         
         # Create a text field combining product name, aisle, and department
         products_df['search_text'] = products_df['product_name'] + ' ' + \
@@ -346,9 +382,46 @@ def search(request):
         # Calculate similarity scores
         similarity_scores = cosine_similarity(query_vector, tfidf_matrix)
         
-        # Get top 10 most similar products
-        top_indices = similarity_scores[0].argsort()[-10:][::-1]
-        results = products_df.iloc[top_indices][['product_id', 'product_name', 'aisle', 'department']]
+        # Get all products with their NLP scores
+        results = products_df[['product_id', 'product_name', 'aisle', 'department']].copy()
+        results['nlp_score'] = similarity_scores[0]
+        
+        # Load SVD cluster model for recommendations
+        svd_model = SVDClusterRecommender.load_model()
+        
+        # Get user's previously bought products if logged in
+        previously_bought = set()
+        if 'user_id' in request.session:
+            user_id = request.session['user_id']
+            user_products = merged_df.merge(
+                orders_df[orders_df['user_id'] == user_id][['order_id']],
+                on='order_id'
+            )['product_id'].unique()
+            previously_bought = set(user_products)
+            
+            # Get SVD recommendations for all products
+            if svd_model is not None:
+                # Get all recommendations at once
+                all_recommendations = svd_model.get_recommendations(user_id, n_recommendations=1000)
+                
+                # Create a dictionary of product_id to score
+                svd_scores = {rec['product_id']: rec['similarity_score'] for rec in all_recommendations}
+                
+                # Add SVD scores to results, defaulting to 0 if not found
+                results['svd_score'] = results['product_id'].map(lambda x: svd_scores.get(x, 0))
+            else:
+                results['svd_score'] = 0
+        else:
+            results['svd_score'] = 0
+        
+        # Add previously bought flag
+        results['previously_bought'] = results['product_id'].isin(previously_bought)
+        
+        # Calculate combined score (70% NLP, 30% SVD)
+        results['combined_score'] = (0.7 * results['nlp_score']) + (0.3 * results['svd_score'])
+        
+        # Sort by combined score and get top 10
+        results = results.sort_values('combined_score', ascending=False).head(10)
         
         # Group results by aisle
         aisle_results = results.groupby('aisle').agg({
