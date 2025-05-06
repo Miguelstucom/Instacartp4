@@ -8,7 +8,7 @@ class Command(BaseCommand):
         parser.add_argument(
             '--components',
             type=int,
-            default=50,
+            default=80,
             help='Number of components for SVD'
         )
         parser.add_argument(

@@ -1,0 +1,89 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="product-detail">
+    <div class="row">
+        <!-- Product Information -->
+        <div class="col-md-8">
+            <div class="card mb-4">
+                <div class="card-body">
+                    <h1 class="card-title">{{ product.product_name }}</h1>
+                    <div class="product-meta">
+                        <span class="badge bg-success">{{ product.aisle }}</span>
+                        <span class="badge bg-info">{{ product.department }}</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Frequently Bought Together -->
+        <div class="col-md-4">
+            <div class="card">
+                <div class="card-header bg-primary text-white">
+                    <h3 class="h5 mb-0">Frequently Bought Together</h3>
+                </div>
+                <div class="card-body">
+                    {% if frequently_bought_together %}
+                        <div class="recommendations-list">
+                            {% for item in frequently_bought_together %}
+                            <div class="recommendation-item mb-3 p-3 border rounded">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <h5 class="mb-0">{{ item.product_name }}</h5>
+                                    <span class="badge bg-primary">Score: {{ item.score|floatformat:2 }}</span>
+                                </div>
+                                <div class="rule-metrics mt-2">
+                                    <span class="badge bg-success me-1">Confidence: {{ item.confidence|floatformat:2 }}</span>
+                                    <span class="badge bg-warning me-1">Lift: {{ item.lift|floatformat:2 }}</span>
+                                    <span class="badge bg-info">Support: {{ item.support|floatformat:2 }}</span>
+                                </div>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    {% else %}
+                        <div class="alert alert-info">
+                            No frequently bought together recommendations available.
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.product-detail {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 2rem 0;
+}
+
+.product-meta {
+    margin-top: 1rem;
+}
+
+.product-meta .badge {
+    margin-right: 0.5rem;
+    font-size: 1rem;
+}
+
+.recommendation-item {
+    background: white;
+    transition: transform 0.2s;
+}
+
+.recommendation-item:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+}
+
+.rule-metrics {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.rule-metrics .badge {
+    font-size: 0.8rem;
+}
+</style>
+{% endblock %} 
