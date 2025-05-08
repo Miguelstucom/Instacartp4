@@ -1036,7 +1036,7 @@ class SVDClusterRecommender:
                 transformed_matrix = U * S
                 normalized_matrix = normalize(transformed_matrix)
                 self.cluster_models[cluster_id]['normalized_matrix'] = normalized_matrix
-
+                
                 # Make predictions on test set
                 test_dense = test_matrix.toarray()
                 test_transformed = test_dense @ Vh.T
@@ -1075,8 +1075,8 @@ class SVDClusterRecommender:
                 
                 # Store model and metrics
                 self.cluster_models[cluster_id]['metrics'] = {
-                    'rmse': rmse,
-                    'mae': mae,
+                        'rmse': rmse,
+                        'mae': mae,
                     'accuracy': accuracy,
                     'precision': precision,
                     'recall': recall,
@@ -1461,7 +1461,7 @@ class ClusterProductBasketModel:
                 return model
         except Exception as e:
             print(f"Error loading model: {str(e)}")
-            return None
+            return None 
 
 def calculate_ranking_metrics(y_true, y_pred, k=5):
     """Calculate ranking metrics for recommendations
